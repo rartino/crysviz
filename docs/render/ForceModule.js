@@ -370,4 +370,22 @@ export function updateForces(forceFactor = general.forceScale ?? 1.0, colorMap =
   groups.forcesTipMesh.instanceColor.needsUpdate = true;
   groups.forcesTipMesh.geometry.attributes.instanceEmissive.needsUpdate = true;
   groups.forcesTipMesh.geometry.attributes.instanceEmissiveIntensity.needsUpdate = true;
+
+  // An InstancedMesh caches the bounding sphere the renderer's frustum test
+  // computes on its FIRST cull check, and three.js never invalidates it when
+  // setMatrixAt() moves instances (see Frustum.intersectsObject: it computes
+  // only while `boundingSphere === null`). The meshes above are only recreated
+  // when the arrow COUNT changes, so any redraw that keeps the count but moves
+  // the arrows — a trajectory frame, a display-boundary edit that shifts which
+  // periodic image an atom is drawn at, a manual spin re-emitted elsewhere —
+  // would otherwise keep culling against where the arrows USED to be. With a
+  // small arrow set (one manual spin) that stale sphere is small and far away,
+  // and the whole mesh vanishes as soon as the camera stops overlapping it:
+  // zooming in tightens the frustum and every arrow disappears at once.
+  // Nulling both defers the recompute to the next cull test, which is where
+  // three.js wants it.
+  groups.forcesShaftMesh.boundingSphere = null;
+  groups.forcesShaftMesh.boundingBox = null;
+  groups.forcesTipMesh.boundingSphere = null;
+  groups.forcesTipMesh.boundingBox = null;
 }
