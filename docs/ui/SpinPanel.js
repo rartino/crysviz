@@ -1,5 +1,5 @@
 import * as THREE from '../external/three/three.module.js';
-import { updateSpins } from '../render/index.js';
+import { updateSpins, autoSpinScale } from '../render/index.js';
 import { fileBrowser, general } from '../state/store.js';
 import { Spin } from '../model/index.js'; // Update path
 import { createColorBar } from './ColorBarWidget.js';
@@ -713,55 +713,12 @@ export function addSpinPanel(target = "cvPanelBody-spins") {
     if (general.spinsActive) updateSpins(val, sourceSelect.value === "manual", parseManualSpins(), colorMapSelect.value);
   });
 
-  // Global Scaling so the LONGEST spin renders a little shorter than the
-  // nearest neighbour of a magnetic atom: scale = 0.9 * d_min / L_max.
-  //   L_max = longest spin's base (linear) length = mag * (scaling ?? 1), the
-  //           slider-independent length SpinModule multiplies by spinScale.
-  //   d_min = min distance from a magnetic atom (nonzero spin) to ANY other
-  //           atom, over the WRAPPED cartesian positions (periodic copies in,
-  //           so minimum-image neighbours count).
-  // Log-length mode still sizes off this linear basis (the slider is a single
-  // global factor; there is no log-mode solver). ponytail: O(N^2) over wrapped
-  // atoms, fine for the small cells this panel handles.
-  function computeAutoSpinScale() {
-    const structure = fileBrowser.selectedStructure;
-    const useManualSpins = sourceSelect.value === "manual";
-    const spins = useManualSpins ? parseManualSpins() : (structure?.spins ?? []);
-    if (!spins?.length) return null;
-
-    let Lmax = 0;
-    const magnetic = new Set();
-    spins.forEach((spin, i) => {
-      const v = spin?.vector;
-      if (!v) return;
-      const mag = Math.hypot(v[0], v[1], v[2]);
-      if (mag <= 1e-6) return;
-      magnetic.add(useManualSpins ? (spin.atomIndex ?? i) : i);
-      Lmax = Math.max(Lmax, mag * (spin.scaling ?? 1.0));
-    });
-    if (Lmax <= 0 || magnetic.size === 0) return null;
-
-    const wrapped = structure?.periodic?.visibleWrapped ?? structure?.periodic?.wrapped;
-    const cart = wrapped?.cart;
-    if (!cart?.length) return null;
-    const srcIndex = wrapped.srcIndex;
-    let dMin = Infinity;
-    for (let i = 0; i < cart.length; i++) {
-      if (!magnetic.has(srcIndex ? srcIndex[i] : i)) continue;
-      const a = cart[i];
-      for (let j = 0; j < cart.length; j++) {
-        if (j === i) continue;
-        const b = cart[j];
-        const d = Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
-        if (d > 1e-6 && d < dMin) dMin = d; // >1e-6 guards coincident duplicates
-      }
-    }
-    if (!Number.isFinite(dMin)) return null;
-    return 0.9 * dMin / Lmax;
-  }
-
+  // Auto length-scale (shared render/SpinModule.autoSpinScale — same result the
+  // widget applies automatically). Uses the live source (file or manual spins).
   autoScaleBtn.addEventListener("click", () => {
-    const scale = computeAutoSpinScale();
+    const useManualSpins = sourceSelect.value === "manual";
+    const spins = useManualSpins ? parseManualSpins() : (fileBrowser.selectedStructure?.spins ?? []);
+    const scale = autoSpinScale(fileBrowser.selectedStructure, spins, { manual: useManualSpins });
     if (scale == null || !(scale > 0)) return; // no spins / all-zero -> no-op
     const lo = parseFloat(lengthSlider.min), hi = parseFloat(lengthSlider.max);
     const clamped = Math.min(Math.max(scale, lo), hi);

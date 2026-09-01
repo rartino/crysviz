@@ -8,7 +8,7 @@
 import { fileBrowser, general, structureShip } from '../state/store.js';
 import { updateVisualization } from '../core/crystal-viewer.js';
 import { setActivePipelineFromController } from './ColorPanel.js';
-import { updateSpins, updatePolyhedra } from '../render/index.js';
+import { updateSpins, updatePolyhedra, autoSpinScale } from '../render/index.js';
 import { recenterCamera } from './WindowAndSceneControls.js';
 import { selectStructure, createRow } from './FileBrowswerPanel.js';
 import { showTrajectoryFrame } from './TrajectoryPanel.js';
@@ -81,6 +81,7 @@ export function initWidgetMode(opts) {
 
   setupFramesMode();
   buildSettings(opts?.href ?? '');
+  applyWidgetAutoScale();
   ensureSpinsRendered();
   openLockedLegend();
   // A widget .crysviz carries no camera pose, so loadStructure's crysviz branch
@@ -185,7 +186,12 @@ function buildSettings(href) {
   logo.setAttribute('aria-label', 'CrysViz menu');
   logo.title = 'CrysViz';
   const img = document.createElement('img');
-  img.src = './data/CrysViz_logo_white_back_logo_only.png';
+  // Per applied theme (ThemeManager stamps <html data-theme>): a dark-ground
+  // mark on dark, the white-ground one otherwise.
+  const darkTheme = document.documentElement.getAttribute('data-theme') === 'dark';
+  img.src = darkTheme
+    ? './data/CrysViz_logo_black_back_logo_only.png'
+    : './data/CrysViz_logo_white_back_logo_only.png';
   img.alt = 'CrysViz';
   logo.appendChild(img);
   buttonEl = logo;
@@ -205,8 +211,14 @@ function buildSettings(href) {
   // c. Bonds / Polyhedra (check toggles, reflecting live state).
   menu.appendChild(makeToggleRow('bonds', 'Bonds', () => general.showBonds));
   menu.appendChild(makeToggleRow('poly', 'Polyhedra', () => general.showPolyhedra));
+  // d. Embedder-supplied links (validated in ShareModule), if any.
+  const links = structureShip.container[fileBrowser.selectedRowIndex]?.menuLinks;
+  if (Array.isArray(links) && links.length) {
+    menu.appendChild(makeSep());
+    for (const l of links) menu.appendChild(makeLinkRow(l.label, l.url));
+  }
   menu.appendChild(makeSep());
-  // d. Open the same structure in the full UI (new tab).
+  // e. Open the same structure in the full UI (new tab).
   menu.appendChild(makeActionRow('Open in CrysViz', openFullUi));
 
   logo.addEventListener('click', (e) => { e.stopPropagation(); toggleMenu(); });
@@ -284,6 +296,15 @@ function makeToggleRow(key, label, read) {
   return row;
 }
 
+/** An embedder link (role=menuitem): opens its url in a new tab. Same popup
+ *  permission as "Open in CrysViz". */
+function makeLinkRow(label, url) {
+  const row = makeRow('menuitem', label);
+  row.dataset.link = url;
+  row.addEventListener('click', (e) => { e.stopPropagation(); closeMenu(); window.open(url, '_blank', 'noopener'); });
+  return row;
+}
+
 function makeActionRow(label, onClick) {
   const row = makeRow('menuitem', label);
   row.dataset.action = 'open';
@@ -353,6 +374,7 @@ async function onSelect(groupKey, value) {
   if (ok) {
     selection.cell = value;
     syncGroupChecks('cell');
+    applyWidgetAutoScale(); // each structure's spins/L_max differ
     ensureSpinsRendered();
   }
 }
@@ -384,7 +406,10 @@ function applyPreset(value) {
       restyleAtomsBonds();
       break;
     case 'cel':
+      // Every preset carries its own look: Cel resets sizes to boot defaults too.
       general.renderStyle = 'cel';
+      general.atomSize = defaultAtomSize;
+      general.bondRadius = defaultBondRadius;
       setActivePipelineFromController('depthpeel');
       restyleAtomsBonds();
       break;
@@ -579,6 +604,16 @@ function describeCellFailure(_error) {
 /** SpinModule only draws a species whose #speciesVisibilityContainer checkbox
  *  is checked — the Spins panel builds those, but in widget mode it may not be
  *  revealed. Ensure a checked checkbox exists per element, then (re)draw. */
+/** Widget: set Global Scaling from the shared autoSpinScale for the current
+ *  structure (clamped to the panel's [0.1, 10] slider range). No-op — keeps the
+ *  current scale — when there is nothing to compute (no/zero spins). Applied at
+ *  init and after every structure switch, since each structure's L_max differs. */
+function applyWidgetAutoScale() {
+  const scale = autoSpinScale(fileBrowser.selectedStructure);
+  if (scale == null || !(scale > 0)) return;
+  general.spinScale = Math.min(Math.max(scale, 0.1), 10);
+}
+
 function ensureSpinsRendered() {
   const structure = fileBrowser.selectedStructure;
   if (!structure?.spins?.length || !general.spinsActive) return;

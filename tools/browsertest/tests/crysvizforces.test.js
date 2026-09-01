@@ -128,25 +128,32 @@ const H = require('../harness');
   H.check('full app: Show-spins-on-copies toggle exists and defaults off',
     copies.flag === false && copies.exists === true && copies.checked === false, JSON.stringify(copies));
 
-  // Item 2: "Auto" spin scaling — sets Global Scaling to 0.9*d_min/L_max,
-  // clamped to the slider range, and redraws.
+  // Item 3: "Auto" spin scaling — d_target = min(0.9*d(mag→non), 0.9*0.5*d(mag→mag)),
+  // scale = d_target/L_max, clamped to the slider range. This fixture has spins
+  // on EVERY atom (no non-magnetic), so only the mag→mag term applies. Expected
+  // recomputed inline (independent of autoSpinScale) to catch a formula regression.
   const auto = await page.evaluate(async () => {
     const { general, fileBrowser } = await import('./state/store.js');
+    const { autoSpinScale } = await import('./render/index.js');
     general.spinsActive = true;
     const s = fileBrowser.selectedStructure;
-    // Expected value, computed the same way as the panel, for comparison.
     let Lmax = 0; const mag = new Set();
     s.spins.forEach((sp, i) => { const v = sp.vector; if (!v) return; const m = Math.hypot(v[0], v[1], v[2]); if (m > 1e-6) { mag.add(i); Lmax = Math.max(Lmax, m * (sp.scaling ?? 1)); } });
     const w = s.periodic.visibleWrapped ?? s.periodic.wrapped; const cart = w.cart; const si = w.srcIndex;
-    let dMin = Infinity;
-    for (let i = 0; i < cart.length; i++) { if (!mag.has(si ? si[i] : i)) continue; const a = cart[i]; for (let j = 0; j < cart.length; j++) { if (j === i) continue; const b = cart[j]; const d = Math.hypot(a[0]-b[0], a[1]-b[1], a[2]-b[2]); if (d > 1e-6 && d < dMin) dMin = d; } }
-    const expected = Math.min(Math.max(0.9 * dMin / Lmax, 0.1), 10);
+    const isMag = (i) => mag.has(si ? si[i] : i);
+    let dMN = Infinity, dMM = Infinity;
+    for (let i = 0; i < cart.length; i++) { if (!isMag(i)) continue; const a = cart[i]; for (let j = 0; j < cart.length; j++) { if (j === i) continue; const b = cart[j]; const d = Math.hypot(a[0]-b[0], a[1]-b[1], a[2]-b[2]); if (d <= 1e-6) continue; if (isMag(j)) { if (d < dMM) dMM = d; } else if (d < dMN) dMN = d; } }
+    const terms = [];
+    if (Number.isFinite(dMN)) terms.push(0.9 * dMN);
+    if (mag.size >= 2 && Number.isFinite(dMM)) terms.push(0.9 * 0.5 * dMM);
+    const expected = Math.min(Math.max(Math.min(...terms) / Lmax, 0.1), 10);
+    const fn = autoSpinScale(s); // the shared fn the button calls
     const before = general.spinScale;
     document.getElementById('spinAutoScaleBtn').click();
-    return { before, after: general.spinScale, expected };
+    return { before, after: general.spinScale, expected, fn: Math.min(Math.max(fn, 0.1), 10), noNonMag: !Number.isFinite(dMN) };
   });
-  H.check('Auto spin scaling sets Global Scaling to 0.9*d_min/L_max (clamped)',
-    Math.abs(auto.after - auto.expected) < 1e-6, JSON.stringify(auto));
+  H.check('Auto spin scaling = min(0.9*d(mag-non), 0.45*d(mag-mag))/L_max (mag-mag only here)',
+    auto.noNonMag === true && Math.abs(auto.after - auto.expected) < 1e-6 && Math.abs(auto.after - auto.fn) < 1e-6, JSON.stringify(auto));
 
   // Item 4: arrowhead length slider drives general.spinTipLength (default 0.4).
   const tip = await page.evaluate(async () => {

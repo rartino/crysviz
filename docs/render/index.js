@@ -75,7 +75,7 @@ export {
   suggestIsoValue,
 } from './Render3DFieldModule.js';
 
-export { removeSpins, updateSpins, deleteSpins, computeSpinColor } from './SpinModule.js';
+export { removeSpins, updateSpins, deleteSpins, computeSpinColor, autoSpinScale } from './SpinModule.js';
 
 export {
   setupAxisControls, setupAxisLongPress, setAxisStepButtonsMode, applyRotationFromUI,

@@ -371,3 +371,65 @@ export function updateSpins(spinFactor = 1.0, useManualSpins = false, manualSpin
   groups.spinTipMesh.geometry.attributes.instanceEmissive.needsUpdate = true;
   groups.spinTipMesh.geometry.attributes.instanceEmissiveIntensity.needsUpdate = true;
 }
+
+/**
+ * Auto length-scale for spin arrows: scale the LONGEST arrow to
+ *   d_target = min( 0.9·d_nn(mag→non-mag), 0.9·0.5·d_nn(mag→mag) )
+ * where d_nn are shortest nearest-neighbour distances over the WRAPPED
+ * cartesian positions (periodic copies in, so minimum-image neighbours count),
+ * and "magnetic" = |spin| > 1e-6. Returns d_target / L_max, or null when no
+ * usable term exists. Edge cases: no non-magnetic atoms → only the mag-pair
+ * term; fewer than two magnetic atoms → only the mag→non-mag term; neither
+ * computable → null. Log-length mode still sizes off this linear L_max (the
+ * scale is a single global factor). Shared by the Spins-panel Auto button and
+ * widget-mode's automatic apply. ponytail: O(N²) over wrapped atoms — fine for
+ * the small cells this serves.
+ *
+ * @param {any} structure
+ * @param {any[]} [spins] defaults to structure.spins
+ * @param {{manual?:boolean}} [opts] manual spins carry their own atomIndex
+ * @returns {number|null}
+ */
+export function autoSpinScale(structure, spins = structure?.spins ?? [], { manual = false } = {}) {
+  if (!spins?.length) return null;
+
+  let Lmax = 0;
+  const magnetic = new Set();
+  spins.forEach((spin, i) => {
+    const v = spin?.vector;
+    if (!v) return;
+    const mag = Math.hypot(v[0], v[1], v[2]);
+    if (mag <= 1e-6) return;
+    magnetic.add(manual ? (spin.atomIndex ?? i) : i);
+    Lmax = Math.max(Lmax, mag * (spin.scaling ?? 1.0));
+  });
+  if (Lmax <= 0 || magnetic.size === 0) return null;
+
+  const wrapped = structure?.periodic?.visibleWrapped ?? structure?.periodic?.wrapped;
+  const cart = wrapped?.cart;
+  if (!cart?.length) return null;
+  const srcIndex = wrapped.srcIndex;
+  const isMag = (i) => magnetic.has(srcIndex ? srcIndex[i] : i);
+
+  let dMagNon = Infinity, dMagMag = Infinity;
+  for (let i = 0; i < cart.length; i++) {
+    if (!isMag(i)) continue;
+    const a = cart[i];
+    for (let j = 0; j < cart.length; j++) {
+      if (j === i) continue;
+      const b = cart[j];
+      const d = Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+      if (d <= 1e-6) continue; // coincident duplicates
+      if (isMag(j)) { if (d < dMagMag) dMagMag = d; }
+      else if (d < dMagNon) dMagNon = d;
+    }
+  }
+
+  const terms = [];
+  if (Number.isFinite(dMagNon)) terms.push(0.9 * dMagNon);
+  // Only when there are ≥2 distinct magnetic atoms (a lone magnetic atom's
+  // periodic copies aren't a "magnetic pair" for this purpose).
+  if (magnetic.size >= 2 && Number.isFinite(dMagMag)) terms.push(0.9 * 0.5 * dMagMag);
+  if (!terms.length) return null;
+  return Math.min(...terms) / Lmax;
+}

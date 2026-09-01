@@ -1388,7 +1388,28 @@ export async function loadCrysvizFile(content, fileName = 'file.crysviz') {
   // camera (widget #load-file= payloads, share links with no pose) must still
   // get centered, or the orbit target stays at the (0,0,0) cell corner.
   container.cameraRestored = !!(state.camera?.position && state.camera?.target);
+  // Optional embedder-supplied menu links (widget mode only; full app ignores).
+  container.menuLinks = validateMenuLinks(state.menuLinks);
   return container;
+}
+
+/** Strictly validate a payload's top-level `menuLinks`: an array of
+ *  {label, url} where label is a non-empty string (≤40 chars) and url parses
+ *  via new URL() with an http/https scheme. Invalid entries are dropped; an
+ *  empty result returns null (no menu group). */
+function validateMenuLinks(raw) {
+  if (!Array.isArray(raw)) return null;
+  const out = [];
+  for (const entry of raw) {
+    const label = typeof entry?.label === 'string' ? entry.label.trim() : '';
+    const url = typeof entry?.url === 'string' ? entry.url : '';
+    if (!label || label.length > 40 || !url) continue;
+    let parsed;
+    try { parsed = new URL(url); } catch { continue; }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') continue;
+    out.push({ label, url });
+  }
+  return out.length ? out : null;
 }
 
 // ---------------------------------------------------------------------------

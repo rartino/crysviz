@@ -175,6 +175,22 @@ cell kind not listed is greyed out ("not provided by the database"). When
 key is widget-only: the full app ignores `frameKinds` entirely (a session with
 it loads as an ordinary multi-frame trajectory).
 
+**Menu links (`menuLinks`)** — the embedder can add its own dropdown items that
+open URLs. A top-level `menuLinks` array of `{label, url}` (same channel as
+`frameKinds`) renders as plain items in the widget menu, between the toggles and
+"Open in CrysViz"; clicking one opens `url` in a new tab. The altermagnets DB
+uses this for e.g. "Download CIF" / "Download POSCAR" links to its files
+endpoint. Validated strictly: each `label` a non-empty string (≤40 chars), each
+`url` an `http`/`https` URL that parses; invalid entries are dropped, an empty
+result shows no group. Widget-only — the full app ignores it.
+
+```json
+{ "menuLinks": [
+  { "label": "Download CIF", "url": "https://altermagnets.example/files/x.cif" },
+  { "label": "Download POSCAR", "url": "https://altermagnets.example/files/x.vasp" }
+] }
+```
+
 **Theme** — append `&theme=dark` or `&theme=light` to the URL (`?widget=1&theme=dark#load-file=…`) to force the embed's UI theme at boot; any other/absent value keeps the default (follow the OS). The choice is applied through the theme manager and is not persisted.
 
 **Sandboxing** — the iframe does **not** need `allow-same-origin`: widget mode

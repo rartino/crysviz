@@ -243,7 +243,9 @@ const clampScale = (scale) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
 /** contenteditable wiring: Enter commits, blur saves; clearing the text (or
  *  retyping the default) drops the override. */
 function wireEditable(el, key, field, defaultText) {
-  el.contentEditable = 'true';
+  // Editable only while UNLOCKED. The widget forces the lock on, so it is
+  // read-only; the full app follows the Lock/Unlock menu item (see syncLock).
+  el.contentEditable = general.compositionLegendLocked ? 'false' : 'true';
   el.spellcheck = false;
   // The body is a drag handle (see extraHandles): without this, pressing on a
   // label starts a window drag and preventDefault()s the click that would
@@ -392,6 +394,9 @@ function buildControls(onLockChange = () => {}) {
     lockItem.textContent = general.compositionLegendLocked ? 'Unlock' : 'Lock';
     lockItem.classList.toggle('cv-colorbar-menu-item-active', general.compositionLegendLocked);
     widget?.wrapper.classList.toggle('cv-colorbar-locked', general.compositionLegendLocked);
+    const editable = general.compositionLegendLocked ? 'false' : 'true';
+    widget?.wrapper.querySelectorAll('.comp-legend-label, .comp-legend-sub')
+      .forEach((el) => { /** @type {HTMLElement} */ (el).contentEditable = editable; });
   }
 
   menuWrap.addEventListener('pointerdown', (event) => event.stopPropagation());
@@ -596,6 +601,14 @@ function openCompositionLegend() {
   // top-left furniture (the measurement toolbar).
   if (lastAnchor) {
     drag.floatAtAnchor(lastAnchor);
+  } else if (document.body.classList.contains('widget-mode')) {
+    // Widget mode: open toward the LOWER-LEFT of the view (the logo/menu owns
+    // the top-left). floatAt clamps to the scene, so a small height miss is safe.
+    const view = document.getElementById('view')?.getBoundingClientRect();
+    const margin = 16;
+    const boxH = wrapper.offsetHeight || 120;
+    drag.floatAt((view?.left ?? 0) + margin,
+      (view?.bottom ?? window.innerHeight) - boxH - margin);
   } else {
     const view = document.getElementById('view')?.getBoundingClientRect();
     drag.floatAt((view?.left ?? 0) + 40, (view?.top ?? 0) + 200); // clear of the axis toolbar

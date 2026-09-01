@@ -125,6 +125,36 @@ function fixtureJson() {
   H.check('widget forces spins on periodic copies (extra arrow instances)',
     spins0.copiesOn === true && spins0.shaft > 8, JSON.stringify(spins0));
 
+  // Item 3: widget auto-applies spin scaling on load (not the default 1.0).
+  const autoLoad = await page.evaluate(async () => {
+    const { general, fileBrowser } = await import('./state/store.js');
+    const { autoSpinScale } = await import('./render/index.js');
+    const want = Math.min(Math.max(autoSpinScale(fileBrowser.selectedStructure), 0.1), 10);
+    return { spinScale: general.spinScale, want };
+  });
+  H.check('widget auto-applies spin scaling on load',
+    Math.abs(autoLoad.spinScale - autoLoad.want) < 1e-6 && Math.abs(autoLoad.spinScale - 1.0) > 1e-6,
+    JSON.stringify(autoLoad));
+
+  // Item 4: the locked composition legend is read-only (labels not editable).
+  const editable = await page.evaluate(() => {
+    const els = [...document.querySelectorAll('.comp-legend-widget .comp-legend-label')];
+    return { count: els.length, anyEditable: els.some((e) => e.isContentEditable) };
+  });
+  H.check('locked legend labels are not editable', editable.count > 0 && editable.anyEditable === false, JSON.stringify(editable));
+
+  // Item 5: widget legend opens toward the lower-left of the view.
+  const pos = await page.evaluate(() => {
+    const w = document.querySelector('.comp-legend-widget');
+    const r = w.getBoundingClientRect();
+    const view = document.getElementById('view').getBoundingClientRect();
+    return {
+      inLeftHalf: (r.left + r.width / 2) < view.left + view.width / 2,
+      inLowerHalf: (r.top + r.height / 2) > view.top + view.height / 2,
+    };
+  });
+  H.check('widget legend is anchored lower-left of the view', pos.inLeftHalf && pos.inLowerHalf, JSON.stringify(pos));
+
   // --- Logo IS the menu trigger; no cog ------------------------------------
   const menu = await page.evaluate(() => {
     const logo = document.querySelector('#widgetLogo');
@@ -198,6 +228,14 @@ function fixtureJson() {
     return { atoms: s.atoms.length, spins: s.spins?.length ?? 0 };
   }, { timeout: 30000, interval: 1000 });
   H.check('Primitive reduces the cell to 2 atoms', !!prim && prim.atoms === 2, JSON.stringify(prim));
+  const autoSwap = await page.evaluate(async () => {
+    const { general, fileBrowser } = await import('./state/store.js');
+    const { autoSpinScale } = await import('./render/index.js');
+    const want = Math.min(Math.max(autoSpinScale(fileBrowser.selectedStructure), 0.1), 10);
+    return { spinScale: general.spinScale, want };
+  });
+  H.check('widget re-applies auto scaling after a structure switch',
+    Math.abs(autoSwap.spinScale - autoSwap.want) < 1e-6, JSON.stringify(autoSwap));
   H.check('primitive spins stay index-aligned to atoms', !!prim && prim.spins === prim.atoms, JSON.stringify(prim));
 
   const primMesh = await page.evaluate(async () => {
@@ -260,6 +298,19 @@ function fixtureJson() {
   H.check('no ray/path-tracing warning modal appears', rt.modalVisible === false, JSON.stringify(rt));
   H.check('Ray tracing bumps atom size to 0.50 and bond diameter to 0.17',
     Math.abs(rt.atomSize - 0.50) < 1e-9 && Math.abs(rt.bondRadius - 0.17) < 1e-9, JSON.stringify(rt));
+
+  // Cel shading also resets sizes to the boot defaults (every preset owns its look).
+  await page.evaluate(() => {
+    document.querySelector('.widget-menu-item[data-group="preset"][data-value="cel"]').click();
+  });
+  const cel = await H.waitFor(page, async () => {
+    const { general } = await import('./state/store.js');
+    if (general.renderStyle !== 'cel') return null;
+    return { atomSize: general.atomSize, bondRadius: general.bondRadius };
+  }, { timeout: 15000, interval: 500 });
+  H.check('Cel shading resets atom/bond sizes to the boot defaults',
+    !!cel && Math.abs(cel.atomSize - boot.atomSize) < 1e-9 && Math.abs(cel.bondRadius - boot.bondRadius) < 1e-9,
+    JSON.stringify({ cel, boot }));
 
   await page.evaluate(() => {
     document.querySelector('.widget-menu-item[data-group="preset"][data-value="normal"]').click();

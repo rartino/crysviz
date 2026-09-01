@@ -25,6 +25,11 @@ export class StructureContainer {
     // to map its Cell menu to frame selection. The full app ignores it.
     /** @type {string[] | null} */
     this.frameKinds = null;
+    // Optional embedder-supplied menu links ({label, url}) from the session's
+    // top-level `menuLinks`. Validated + set by the .crysviz loader, read ONLY
+    // by widget mode (extra dropdown items). The full app ignores it.
+    /** @type {{label:string, url:string}[] | null} */
+    this.menuLinks = null;
   }
 
   _ensureListOfClass(input, ClassType) {

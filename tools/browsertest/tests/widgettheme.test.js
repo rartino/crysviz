@@ -30,12 +30,22 @@ async function loadWidget(page, theme) {
   const { browser, page, errors } = await H.launchApp({ navigate: false });
 
   await loadWidget(page, 'dark');
-  const dark = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
-  H.check('theme=dark applies the dark theme', dark === 'dark', String(dark));
+  const dark = await page.evaluate(() => ({
+    theme: document.documentElement.getAttribute('data-theme'),
+    logo: document.querySelector('#widgetLogo img')?.getAttribute('src'),
+  }));
+  H.check('theme=dark applies the dark theme', dark.theme === 'dark', JSON.stringify(dark));
+  H.check('theme=dark uses the dark-ground logo asset',
+    !!dark.logo && dark.logo.includes('CrysViz_logo_black_back_logo_only.png'), JSON.stringify(dark));
 
   await loadWidget(page, 'light');
-  const light = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
-  H.check('theme=light applies the light theme', light === 'light', String(light));
+  const light = await page.evaluate(() => ({
+    theme: document.documentElement.getAttribute('data-theme'),
+    logo: document.querySelector('#widgetLogo img')?.getAttribute('src'),
+  }));
+  H.check('theme=light applies the light theme', light.theme === 'light', JSON.stringify(light));
+  H.check('theme=light uses the white-ground logo asset',
+    !!light.logo && light.logo.includes('CrysViz_logo_white_back_logo_only.png'), JSON.stringify(light));
 
   H.check('no console errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   await H.finish(browser);
