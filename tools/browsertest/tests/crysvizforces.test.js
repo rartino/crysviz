@@ -128,6 +128,37 @@ const H = require('../harness');
   H.check('full app: Show-spins-on-copies toggle exists and defaults off',
     copies.flag === false && copies.exists === true && copies.checked === false, JSON.stringify(copies));
 
+  // Item 2: "Auto" spin scaling — sets Global Scaling to 0.9*d_min/L_max,
+  // clamped to the slider range, and redraws.
+  const auto = await page.evaluate(async () => {
+    const { general, fileBrowser } = await import('./state/store.js');
+    general.spinsActive = true;
+    const s = fileBrowser.selectedStructure;
+    // Expected value, computed the same way as the panel, for comparison.
+    let Lmax = 0; const mag = new Set();
+    s.spins.forEach((sp, i) => { const v = sp.vector; if (!v) return; const m = Math.hypot(v[0], v[1], v[2]); if (m > 1e-6) { mag.add(i); Lmax = Math.max(Lmax, m * (sp.scaling ?? 1)); } });
+    const w = s.periodic.visibleWrapped ?? s.periodic.wrapped; const cart = w.cart; const si = w.srcIndex;
+    let dMin = Infinity;
+    for (let i = 0; i < cart.length; i++) { if (!mag.has(si ? si[i] : i)) continue; const a = cart[i]; for (let j = 0; j < cart.length; j++) { if (j === i) continue; const b = cart[j]; const d = Math.hypot(a[0]-b[0], a[1]-b[1], a[2]-b[2]); if (d > 1e-6 && d < dMin) dMin = d; } }
+    const expected = Math.min(Math.max(0.9 * dMin / Lmax, 0.1), 10);
+    const before = general.spinScale;
+    document.getElementById('spinAutoScaleBtn').click();
+    return { before, after: general.spinScale, expected };
+  });
+  H.check('Auto spin scaling sets Global Scaling to 0.9*d_min/L_max (clamped)',
+    Math.abs(auto.after - auto.expected) < 1e-6, JSON.stringify(auto));
+
+  // Item 4: arrowhead length slider drives general.spinTipLength (default 0.4).
+  const tip = await page.evaluate(async () => {
+    const { general } = await import('./state/store.js');
+    const sl = /** @type {HTMLInputElement} */ (document.getElementById('spinTipLengthSlider'));
+    const def = general.spinTipLength;
+    sl.value = '0.2'; sl.dispatchEvent(new Event('input'));
+    return { def, defaultAttr: parseFloat(sl.value), flag: general.spinTipLength };
+  });
+  H.check('arrowhead length default is 0.4 and the slider updates it',
+    Math.abs(tip.def - 0.4) < 1e-9 && Math.abs(tip.flag - 0.2) < 1e-9, JSON.stringify(tip));
+
   H.check('no page errors', errors.length === 0, errors[0] || '');
   await H.finish(browser);
 })().catch(H.crash);

@@ -124,8 +124,19 @@ export function addSpinPanel(target = "cvPanelBody-spins") {
   logLengthLabel.appendChild(logLengthCheckbox);
   logLengthLabel.appendChild(document.createTextNode("log length"));
 
+  // "Auto" sets Global Scaling so the longest arrow renders a little shorter
+  // than the nearest magnetic-atom neighbour distance (see autoScaleBtn handler).
+  const autoScaleBtn = document.createElement("button");
+  autoScaleBtn.type = "button";
+  autoScaleBtn.textContent = "Auto";
+  autoScaleBtn.id = "spinAutoScaleBtn";
+  autoScaleBtn.className = "file-action-btn cv-spin-auto-scale";
+  autoScaleBtn.title = "Set the length scale so the longest spin is a little "
+    + "shorter than the nearest neighbour of a magnetic atom.";
+
   lengthTopRow.appendChild(lengthLabel);
   lengthTopRow.appendChild(logLengthLabel);
+  lengthTopRow.appendChild(autoScaleBtn);
   lengthWrapper.appendChild(lengthTopRow);
 
   const lengthBottomRow = document.createElement("div");
@@ -169,6 +180,32 @@ export function addSpinPanel(target = "cvPanelBody-spins") {
   sizeWrapper.appendChild(sizeValue);
   sizeWrapper.appendChild(sizeSlider);
   content.appendChild(sizeWrapper);
+
+  // --- Arrowhead length slider ---
+  const tipWrapper = document.createElement("div");
+  tipWrapper.className = "cv-force-row";
+  const tipLabel = document.createElement("label");
+  tipLabel.textContent = "Arrowhead Length: ";
+  const tipValue = document.createElement("span");
+  tipValue.className = "cv-force-value";
+  tipValue.textContent = (general.spinTipLength ?? 0.4).toFixed(2);
+  const tipSlider = /** @type {any} */ (document.createElement("input"));
+  tipSlider.id = "spinTipLengthSlider";
+  tipSlider.type = "range";
+  tipSlider.min = 0.1;
+  tipSlider.max = 1.5;
+  tipSlider.step = 0.05;
+  tipSlider.value = general.spinTipLength ?? 0.4;
+  tipWrapper.appendChild(tipLabel);
+  tipWrapper.appendChild(tipValue);
+  tipWrapper.appendChild(tipSlider);
+  content.appendChild(tipWrapper);
+  tipSlider.addEventListener("input", () => {
+    const val = parseFloat(tipSlider.value);
+    tipValue.textContent = val.toFixed(2);
+    general.spinTipLength = val;
+    if (general.spinsActive) updateSpins(general.spinScale ?? 1.0, sourceSelect.value === "manual", parseManualSpins(), colorMapSelect.value);
+  });
 
   // --- Show spins on periodic copies -----------------------------------
   const copiesWrapper = document.createElement("div");
@@ -674,6 +711,64 @@ export function addSpinPanel(target = "cvPanelBody-spins") {
     lengthValue.textContent = val.toFixed(2);
     general.spinScale = val;
     if (general.spinsActive) updateSpins(val, sourceSelect.value === "manual", parseManualSpins(), colorMapSelect.value);
+  });
+
+  // Global Scaling so the LONGEST spin renders a little shorter than the
+  // nearest neighbour of a magnetic atom: scale = 0.9 * d_min / L_max.
+  //   L_max = longest spin's base (linear) length = mag * (scaling ?? 1), the
+  //           slider-independent length SpinModule multiplies by spinScale.
+  //   d_min = min distance from a magnetic atom (nonzero spin) to ANY other
+  //           atom, over the WRAPPED cartesian positions (periodic copies in,
+  //           so minimum-image neighbours count).
+  // Log-length mode still sizes off this linear basis (the slider is a single
+  // global factor; there is no log-mode solver). ponytail: O(N^2) over wrapped
+  // atoms, fine for the small cells this panel handles.
+  function computeAutoSpinScale() {
+    const structure = fileBrowser.selectedStructure;
+    const useManualSpins = sourceSelect.value === "manual";
+    const spins = useManualSpins ? parseManualSpins() : (structure?.spins ?? []);
+    if (!spins?.length) return null;
+
+    let Lmax = 0;
+    const magnetic = new Set();
+    spins.forEach((spin, i) => {
+      const v = spin?.vector;
+      if (!v) return;
+      const mag = Math.hypot(v[0], v[1], v[2]);
+      if (mag <= 1e-6) return;
+      magnetic.add(useManualSpins ? (spin.atomIndex ?? i) : i);
+      Lmax = Math.max(Lmax, mag * (spin.scaling ?? 1.0));
+    });
+    if (Lmax <= 0 || magnetic.size === 0) return null;
+
+    const wrapped = structure?.periodic?.visibleWrapped ?? structure?.periodic?.wrapped;
+    const cart = wrapped?.cart;
+    if (!cart?.length) return null;
+    const srcIndex = wrapped.srcIndex;
+    let dMin = Infinity;
+    for (let i = 0; i < cart.length; i++) {
+      if (!magnetic.has(srcIndex ? srcIndex[i] : i)) continue;
+      const a = cart[i];
+      for (let j = 0; j < cart.length; j++) {
+        if (j === i) continue;
+        const b = cart[j];
+        const d = Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+        if (d > 1e-6 && d < dMin) dMin = d; // >1e-6 guards coincident duplicates
+      }
+    }
+    if (!Number.isFinite(dMin)) return null;
+    return 0.9 * dMin / Lmax;
+  }
+
+  autoScaleBtn.addEventListener("click", () => {
+    const scale = computeAutoSpinScale();
+    if (scale == null || !(scale > 0)) return; // no spins / all-zero -> no-op
+    const lo = parseFloat(lengthSlider.min), hi = parseFloat(lengthSlider.max);
+    const clamped = Math.min(Math.max(scale, lo), hi);
+    general.spinScale = clamped;
+    lengthSlider.value = String(clamped);
+    lengthValue.textContent = clamped.toFixed(2);
+    if (general.spinsActive) updateSpins(clamped, sourceSelect.value === "manual", parseManualSpins(), colorMapSelect.value);
   });
 
   sizeSlider.addEventListener("input", () => {

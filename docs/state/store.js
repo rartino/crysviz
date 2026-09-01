@@ -235,7 +235,10 @@ export const general = {
   forceScale: 1.0,
   forceRadius: 0.08,
   spinScale: 1.0,
-  spinRadius: 0.05,
+  spinRadius: 0.08,
+  // Spin arrowhead (cone) length in the same base units as the shaft; scales
+  // with spinRadius like the shaft does. Default 0.4 = half the legacy 0.8.
+  spinTipLength: 0.4,
   // Spin colormap range (Spins panel min/max inputs; read with ||-defaults).
   spinMin: 0,
   spinMax: 2,

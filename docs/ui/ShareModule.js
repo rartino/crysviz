@@ -1382,6 +1382,12 @@ export async function loadCrysvizFile(content, fileName = 'file.crysviz') {
   if (!container) {
     throw new Error(`Could not find the loaded structure in ${fileName}.`);
   }
+  // Record whether the session actually restored a camera pose (restoreCamera
+  // early-returns without one). loadStructure uses this to decide whether its
+  // crysviz branch may skip the fit-to-structure camera: a session WITHOUT a
+  // camera (widget #load-file= payloads, share links with no pose) must still
+  // get centered, or the orbit target stays at the (0,0,0) cell corner.
+  container.cameraRestored = !!(state.camera?.position && state.camera?.target);
   return container;
 }
 

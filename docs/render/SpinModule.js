@@ -7,7 +7,7 @@ import { createArrowMaterial, addArrowEmissiveAttributes } from './ArrowMaterial
 
 const SHAFT_SEGS = 20;
 const TIP_SEGS = 20;
-const TIP_LENGTH = 0.8;
+const TIP_LENGTH = 0.8; // legacy arrowhead length; the general.spinTipLength default is half this
 const TIP_RADIUS = 0.3;
 const UP = new THREE.Vector3(0, 1, 0);
 const LOG_EPS = 1e-6;
@@ -112,7 +112,7 @@ export function updateSpins(spinFactor = 1.0, useManualSpins = false, manualSpin
   const wrapped = structure.periodic.visibleWrapped;
   const shaftDiameter = general.spinRadius ?? 0.08;
   const tipDiameter = TIP_RADIUS * (shaftDiameter / 0.08);
-  const tipLength = TIP_LENGTH * (shaftDiameter / 0.08);
+  const tipLength = (general.spinTipLength ?? TIP_LENGTH / 2) * (shaftDiameter / 0.08);
 
   let spins;
   if (useManualSpins) {
