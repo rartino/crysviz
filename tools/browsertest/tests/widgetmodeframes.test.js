@@ -114,16 +114,16 @@ const waitForCell = (page, atoms) => H.waitFor(page, `(async () => {
     !!loaded && loaded.atoms === 8 && loaded.spins === 8 && loaded.shaft > 0, JSON.stringify(loaded));
 
   // Cell → Conventional selects the 4-atom frame.
-  await clickCell(page, 'conv');
+  await clickCell(page, 'conventional');
   const conv = await waitForCell(page, 4);
   H.check('frames: Conventional switches to the 4-atom frame, spins index-aligned',
     !!conv && conv.atoms === 4 && conv.spins === 4 && conv.shaft > 0, JSON.stringify(conv));
   const convChecked = await page.evaluate(() =>
-    document.querySelector('.widget-menu-item[data-group="cell"][data-value="conv"]').getAttribute('aria-checked'));
+    document.querySelector('.widget-menu-item[data-group="cell"][data-value="conventional"]').getAttribute('aria-checked'));
   H.check('frames: Conventional is marked checked', convChecked === 'true', String(convChecked));
 
   // Cell → Primitive selects the 2-atom frame.
-  await clickCell(page, 'prim');
+  await clickCell(page, 'primitive');
   const prim = await waitForCell(page, 2);
   H.check('frames: Primitive switches to the 2-atom frame, spins index-aligned',
     !!prim && prim.atoms === 2 && prim.spins === 2 && prim.shaft > 0, JSON.stringify(prim));
@@ -157,17 +157,23 @@ const waitForCell = (page, atoms) => H.waitFor(page, `(async () => {
   H.check('frames: frame slider not visible', chrome.slider, JSON.stringify(chrome));
   H.check('frames: side dock not visible', chrome.splitPane, JSON.stringify(chrome));
 
-  // Logo + menu intact.
+  // Logo is the menu trigger; Structures entries are one per frame kind.
   const ui = await page.evaluate(() => {
-    const a = document.querySelector('#widgetLogo');
+    const logo = document.querySelector('#widgetLogo');
     const cells = [...document.querySelectorAll('.widget-menu-item[data-group="cell"]')]
       .map((el) => el.dataset.value);
-    return { href: a ? a.getAttribute('href') : null, cells };
+    let opened = null;
+    const orig = window.open;
+    window.open = (url) => { opened = url; return null; };
+    document.querySelector('.widget-menu-item[data-action="open"]').click();
+    window.open = orig;
+    return { isButton: logo.tagName === 'BUTTON', opened, cells };
   });
-  H.check('frames: logo links back to the full UI (no widget=)',
-    !!ui.href && ui.href.includes('#load-file=') && !ui.href.includes('widget='), JSON.stringify(ui));
-  H.check('frames: Cell menu has loaded/conv/prim entries',
-    ui.cells.length === 3 && ui.cells.includes('conv') && ui.cells.includes('prim'), JSON.stringify(ui));
+  H.check('frames: Open in CrysViz opens the full UI (no widget=)',
+    ui.isButton && !!ui.opened && ui.opened.includes('#load-file=') && !ui.opened.includes('widget='), JSON.stringify(ui));
+  H.check('frames: Structures menu has one entry per frame kind',
+    ui.cells.length === 3 && ui.cells.includes('loaded') && ui.cells.includes('conventional') && ui.cells.includes('primitive'),
+    JSON.stringify(ui));
 
   H.check('frames: no console errors', errors.length === 0, errors.slice(0, 3).join(' | '));
 

@@ -125,15 +125,64 @@ function fixtureJson() {
   H.check('widget forces spins on periodic copies (extra arrow instances)',
     spins0.copiesOn === true && spins0.shaft > 8, JSON.stringify(spins0));
 
-  // --- Logo -----------------------------------------------------------------
-  const logo = await page.evaluate(() => {
-    const a = document.querySelector('#widgetLogo');
-    return { href: a ? a.getAttribute('href') : null, target: a ? a.getAttribute('target') : null };
+  // --- Logo IS the menu trigger; no cog ------------------------------------
+  const menu = await page.evaluate(() => {
+    const logo = document.querySelector('#widgetLogo');
+    const before = document.querySelector('.widget-settings-menu')?.hidden;
+    logo.click();
+    const m = document.querySelector('.widget-settings-menu');
+    const titles = [...document.querySelectorAll('.widget-menu-group-label')].map((e) => e.textContent);
+    const res = {
+      isButton: logo.tagName === 'BUTTON',
+      notAnchor: logo.tagName !== 'A',
+      hasPopup: logo.getAttribute('aria-haspopup'),
+      cog: !!document.querySelector('.widget-settings-btn'),
+      hiddenBefore: before, hiddenAfter: m.hidden, expanded: logo.getAttribute('aria-expanded'),
+      titles,
+    };
+    logo.click(); // close again
+    return res;
   });
-  H.check('logo links to the same structure (#load-file=), full UI (no widget=)',
-    !!logo.href && logo.href.includes('#load-file=') && !logo.href.includes('widget='),
-    JSON.stringify(logo));
-  H.check('logo opens in a new tab', logo.target === '_blank');
+  H.check('logo is a role=button trigger, not a link', menu.isButton && menu.notAnchor && menu.hasPopup === 'menu', JSON.stringify(menu));
+  H.check('no cog button exists', menu.cog === false, JSON.stringify(menu));
+  H.check('clicking the logo opens the menu (aria-expanded)', menu.hiddenBefore === true && menu.hiddenAfter === false && menu.expanded === 'true', JSON.stringify(menu));
+  H.check('groups are titled Structures + Presets', menu.titles.includes('Structures') && menu.titles.includes('Presets'), JSON.stringify(menu.titles));
+
+  // "Open in CrysViz" opens the same structure minus widget= in a new tab.
+  const opened = await page.evaluate(() => {
+    let captured = null;
+    const orig = window.open;
+    window.open = (url, target, feat) => { captured = { url, target, feat }; return null; };
+    document.querySelector('.widget-menu-item[data-action="open"]').click();
+    window.open = orig;
+    return captured;
+  });
+  H.check('Open in CrysViz opens the full UI (#load-file=, no widget=, new tab)',
+    !!opened && opened.url.includes('#load-file=') && !opened.url.includes('widget=')
+      && opened.target === '_blank' && String(opened.feat).includes('noopener'), JSON.stringify(opened));
+
+  // --- Bonds / Polyhedra check-toggles -------------------------------------
+  const toggles = await page.evaluate(async () => {
+    const { general } = await import('./state/store.js');
+    const bondsRow = document.querySelector('.widget-menu-item[data-toggle="bonds"]');
+    const polyRow = document.querySelector('.widget-menu-item[data-toggle="poly"]');
+    const before = { bonds: general.showBonds, poly: general.showPolyhedra,
+      bondsChecked: bondsRow.getAttribute('aria-checked'), polyChecked: polyRow.getAttribute('aria-checked') };
+    bondsRow.click();
+    const afterBonds = { bonds: general.showBonds, checked: bondsRow.getAttribute('aria-checked') };
+    return { before, afterBonds };
+  });
+  H.check('Polyhedra defaults OFF in the widget', toggles.before.poly === false && toggles.before.polyChecked === 'false', JSON.stringify(toggles));
+  H.check('Bonds toggle flips state + checkmark', toggles.afterBonds.bonds === !toggles.before.bonds
+    && toggles.afterBonds.checked === (toggles.afterBonds.bonds ? 'true' : 'false'), JSON.stringify(toggles));
+  // Restore bonds on so the rest of the scene looks normal.
+  await page.evaluate(() => { const r = document.querySelector('.widget-menu-item[data-toggle="bonds"]'); if (r.getAttribute('aria-checked') === 'false') r.click(); });
+
+  // Boot atom/bond sizes = the "Normal" restore target.
+  const boot = await page.evaluate(async () => {
+    const { general } = await import('./state/store.js');
+    return { atomSize: general.atomSize, bondRadius: general.bondRadius };
+  });
 
   // --- Cell: Primitive changes the displayed structure ----------------------
   // Cell swaps run first, in the default Normal pipeline; ray tracing is tested
@@ -191,9 +240,9 @@ function fixtureJson() {
   H.check('Conventional swap succeeds with index-aligned spins',
     !!conv && conv.atoms === 8 && conv.spins === conv.atoms && conv.checked === 'true', JSON.stringify(conv));
 
-  // --- Rendering: ray tracing, no warning modal (LAST — no swap follows) -----
+  // --- Presets: ray tracing bumps sizes; Normal restores (LAST — no swap follows) ---
   await page.evaluate(() => {
-    document.querySelector('.widget-menu-item[data-group="render"][data-value="raytrace"]').click();
+    document.querySelector('.widget-menu-item[data-group="preset"][data-value="raytrace"]').click();
   });
   await H.waitFor(page, async () => {
     const { general } = await import('./state/store.js');
@@ -205,11 +254,25 @@ function fixtureJson() {
     const modalVisible = !!modal && !modal.hidden
       && getComputedStyle(modal).display !== 'none'
       && modal.getBoundingClientRect().width > 0;
-    return { pipeline: general.renderPipeline, modalVisible };
+    return { pipeline: general.renderPipeline, modalVisible, atomSize: general.atomSize, bondRadius: general.bondRadius };
   });
   H.check('Ray tracing sets renderPipeline=raytrace', rt.pipeline === 'raytrace', JSON.stringify(rt));
   H.check('no ray/path-tracing warning modal appears', rt.modalVisible === false, JSON.stringify(rt));
-  await page.waitForTimeout(1500); // let the tracer settle before teardown
+  H.check('Ray tracing bumps atom size to 0.50 and bond diameter to 0.17',
+    Math.abs(rt.atomSize - 0.50) < 1e-9 && Math.abs(rt.bondRadius - 0.17) < 1e-9, JSON.stringify(rt));
+
+  await page.evaluate(() => {
+    document.querySelector('.widget-menu-item[data-group="preset"][data-value="normal"]').click();
+  });
+  const back2 = await H.waitFor(page, async () => {
+    const { general } = await import('./state/store.js');
+    if (general.renderPipeline === 'raytrace') return null;
+    return { pipeline: general.renderPipeline, atomSize: general.atomSize, bondRadius: general.bondRadius };
+  }, { timeout: 20000, interval: 500 });
+  H.check('Normal restores the boot atom/bond sizes',
+    !!back2 && Math.abs(back2.atomSize - boot.atomSize) < 1e-9 && Math.abs(back2.bondRadius - boot.bondRadius) < 1e-9,
+    JSON.stringify({ back2, boot }));
+  await page.waitForTimeout(1000); // settle before teardown
 
   // --- Console cleanliness --------------------------------------------------
   H.check('no console errors during the widget session',

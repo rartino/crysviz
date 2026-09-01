@@ -168,12 +168,14 @@ optional):
 }
 ```
 
-When `frameKinds` is present the widget's Cell menu simply **selects the
+When `frameKinds` is present the widget's Structures menu simply **selects the
 matching frame** — no moyo runs and no in-browser spin remapping happens; a
 cell kind not listed is greyed out ("not provided by the database"). When
 `frameKinds` is absent the menu falls back to the moyo build path above. The
 key is widget-only: the full app ignores `frameKinds` entirely (a session with
 it loads as an ordinary multi-frame trajectory).
+
+**Theme** — append `&theme=dark` or `&theme=light` to the URL (`?widget=1&theme=dark#load-file=…`) to force the embed's UI theme at boot; any other/absent value keeps the default (follow the OS). The choice is applied through the theme manager and is not persisted.
 
 **Sandboxing** — the iframe does **not** need `allow-same-origin`: widget mode
 runs correctly in an opaque origin where browser storage is unavailable

@@ -1,13 +1,14 @@
 // Widget mode (?widget=1): a stripped-down embed of the app showing only the
-// 3D structure view, a locked composition legend, a top-left CrysViz logo that
-// opens the full UI, and a top-right settings menu (cell choice + rendering
-// style). Everything here is additive and gated on body.widget-mode; the full
-// app is untouched. See docs/styles/widgetMode.css for the chrome-hiding rules.
+// 3D structure view, a locked composition legend, and a top-left CrysViz logo
+// that IS the menu trigger — its dropdown carries Structures (cell choice),
+// Presets (render style), Bonds/Polyhedra toggles, and "Open in CrysViz"
+// (full UI, new tab). Everything here is additive and gated on body.widget-mode;
+// the full app is untouched. See docs/styles/widgetMode.css for the chrome rules.
 
 import { fileBrowser, general, structureShip } from '../state/store.js';
 import { updateVisualization } from '../core/crystal-viewer.js';
 import { setActivePipelineFromController } from './ColorPanel.js';
-import { updateSpins } from '../render/index.js';
+import { updateSpins, updatePolyhedra } from '../render/index.js';
 import { recenterCamera } from './WindowAndSceneControls.js';
 import { selectStructure, createRow } from './FileBrowswerPanel.js';
 import { showTrajectoryFrame } from './TrajectoryPanel.js';
@@ -34,17 +35,20 @@ let buildPromise = null;
 
 /** Frames mode: the database precomputed the cells and shipped them as frames
  *  of a multi-frame session (top-level `frameKinds`, stashed on the container
- *  by ShareModule). When active, the Cell menu selects frames instead of
- *  building variants with moyo — the moyo path (buildVariants/WidgetSpinRemap)
- *  is never invoked. null = not in frames mode (fall back to moyo). */
-/** @type {import('../model/StructureContainer.js').StructureContainer|null} */
+ *  by ShareModule). When active, the Structures menu lists one entry per frame
+ *  (value = its kind string) and selects frames instead of building variants
+ *  with moyo. null = not in frames mode (fall back to moyo's loaded/conv/prim). */
+/** @type {any} */
 let framesContainer = null;
-/** Cell-menu value → frame index in framesContainer.structures (-1 = kind not
- *  provided by the database → that entry is disabled). */
-const frameForCell = { loaded: -1, conv: -1, prim: -1 };
 
-/** The frameKinds string each Cell-menu value maps to. */
-const CELL_TO_KIND = { loaded: 'loaded', conv: 'conventional', prim: 'primitive' };
+/** Launch URL (captured before the loader strips the hash) — the "Open in
+ *  CrysViz" menu item opens it, minus the widget param, in a new tab. */
+let capturedHref = '';
+
+/** The boot atom-size / bond-diameter, captured in initWidgetMode as the
+ *  "Normal" preset's restore target (see the note there). */
+let defaultAtomSize = null;
+let defaultBondRadius = null;
 
 /**
  * Initialise widget-mode UI. Runs once, after the authoritative bootstrap has
@@ -65,10 +69,18 @@ export function initWidgetMode(opts) {
   // Magnetic unit cells from the database: show a spin arrow on every periodic
   // image, not just the primary atom (see general.showSpinsOnCopies).
   general.showSpinsOnCopies = true;
+  // Capture the boot atom-size / bond-diameter as the "Normal" preset target.
+  // (store.js's atomSize=1.0 / bondRadius=0.08 are overwritten at boot by the
+  // #atomSize / #bondWidth sliders in initApp, so the live values here — not
+  // the store constants — are the app defaults the widget actually shows.)
+  defaultAtomSize = general.atomSize;
+  defaultBondRadius = general.bondRadius;
+  // Polyhedra default OFF in the embed regardless of the payload's display flag.
+  general.showPolyhedra = false;
+  updatePolyhedra();
 
   setupFramesMode();
-  buildLogo(opts?.href ?? '');
-  buildSettings();
+  buildSettings(opts?.href ?? '');
   ensureSpinsRendered();
   openLockedLegend();
   // A widget .crysviz carries no camera pose, so loadStructure's crysviz branch
@@ -91,29 +103,45 @@ function setupFramesMode() {
   const kinds = container?.frameKinds;
   if (!Array.isArray(kinds) || kinds.length !== container.structures.length) return;
   framesContainer = container;
-  frameForCell.loaded = kinds.indexOf(CELL_TO_KIND.loaded);
-  if (frameForCell.loaded < 0) frameForCell.loaded = 0; // fallback: frame 0 is "as loaded"
-  frameForCell.conv = kinds.indexOf(CELL_TO_KIND.conv);
-  frameForCell.prim = kinds.indexOf(CELL_TO_KIND.prim);
 }
 
-// ── Logo ─────────────────────────────────────────────────────────────────
-
-function buildLogo(href) {
-  const link = document.createElement('a');
-  link.id = 'widgetLogo';
-  link.target = '_blank';
-  link.rel = 'noopener';
-  link.href = fullUiHref(href);
-  link.title = 'Open in CrysViz';
-  const img = document.createElement('img');
-  img.src = './data/CrysViz_logo_white_back_logo_only.png';
-  img.alt = 'Open in CrysViz';
-  link.appendChild(img);
-  document.body.appendChild(link);
+/** Menu label for a frame kind: "loaded" → "As loaded", anything else
+ *  capitalized ("conventional" → "Conventional", arbitrary "foo" → "Foo"). */
+function kindLabel(kind) {
+  if (kind === 'loaded') return 'As loaded';
+  const k = String(kind);
+  return k.charAt(0).toUpperCase() + k.slice(1);
 }
 
-/** The launch URL with the `widget` param removed — same structure, full UI. */
+/** The Structures group's entries. Frames mode: one per shipped frame, value =
+ *  its kind string. Moyo fallback: the fixed loaded/conventional/primitive. */
+function structureItems() {
+  if (framesContainer) {
+    return framesContainer.frameKinds.map((/** @type {string} */ kind) => ({ value: kind, label: kindLabel(kind) }));
+  }
+  return [
+    { value: 'loaded', label: 'As loaded' },
+    { value: 'conv', label: 'Conventional' },
+    { value: 'prim', label: 'Primitive' },
+  ];
+}
+
+/** The Structures value currently shown (the checkmark's initial home). */
+function initialStructureValue() {
+  if (framesContainer) {
+    const i = framesContainer.structures.indexOf(fileBrowser.selectedStructure);
+    return framesContainer.frameKinds[i >= 0 ? i : 0];
+  }
+  return 'loaded';
+}
+
+// ── Logo trigger + dropdown menu ───────────────────────────────────────────
+//
+// The CrysViz logo (top-left) IS the menu trigger — no separate cog. Clicking
+// it opens the dropdown below-left; the menu's last item ("Open in CrysViz")
+// does what the old logo link did.
+
+/** The launch URL with the widget param removed — same structure, full UI. */
 function fullUiHref(href) {
   try {
     const url = new URL(href, window.location.href);
@@ -124,21 +152,9 @@ function fullUiHref(href) {
   }
 }
 
-// ── Settings menu ──────────────────────────────────────────────────────────
-
-const CELL_GROUP = {
-  key: 'cell',
-  label: 'Cell',
-  items: [
-    { value: 'loaded', label: 'As loaded' },
-    { value: 'conv', label: 'Conventional' },
-    { value: 'prim', label: 'Primitive' },
-  ],
-};
-
-const RENDER_GROUP = {
-  key: 'render',
-  label: 'Rendering',
+const PRESET_GROUP = {
+  key: 'preset',
+  label: 'Presets',
   items: [
     { value: 'normal', label: 'Normal' },
     { value: 'cel', label: 'Cel shading' },
@@ -147,25 +163,32 @@ const RENDER_GROUP = {
   ],
 };
 
-/** Live per-group selection, kept in sync with the check marks. */
-const selection = { cell: 'loaded', render: currentRenderValue() };
+/** Live radio selection per group (Structures = 'cell', Presets = 'preset').
+ *  The check-toggles (Bonds/Polyhedra) read general.* directly instead. */
+const selection = { cell: 'loaded', preset: currentPresetValue() };
 
 /** @type {HTMLElement|null} */ let menuEl = null;
-/** @type {HTMLButtonElement|null} */ let buttonEl = null;
+/** @type {HTMLElement|null} */ let buttonEl = null; // the logo trigger
 
-function buildSettings() {
+function buildSettings(href) {
+  capturedHref = href;
+  selection.cell = initialStructureValue();
+
   const host = document.createElement('div');
   host.id = 'widgetSettings';
 
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'widget-settings-btn';
-  button.setAttribute('aria-haspopup', 'menu');
-  button.setAttribute('aria-expanded', 'false');
-  button.setAttribute('aria-label', 'Display settings');
-  button.title = 'Display settings';
-  button.textContent = '⚙';
-  buttonEl = button;
+  const logo = document.createElement('button');
+  logo.type = 'button';
+  logo.id = 'widgetLogo';
+  logo.setAttribute('aria-haspopup', 'menu');
+  logo.setAttribute('aria-expanded', 'false');
+  logo.setAttribute('aria-label', 'CrysViz menu');
+  logo.title = 'CrysViz';
+  const img = document.createElement('img');
+  img.src = './data/CrysViz_logo_white_back_logo_only.png';
+  img.alt = 'CrysViz';
+  logo.appendChild(img);
+  buttonEl = logo;
 
   const menu = document.createElement('div');
   menu.className = 'widget-settings-menu';
@@ -173,24 +196,22 @@ function buildSettings() {
   menu.hidden = true;
   menuEl = menu;
 
-  renderGroup(menu, CELL_GROUP);
-  // Frames mode: disable cell kinds the database did not ship.
-  if (framesContainer) {
-    for (const kind of ['conv', 'prim']) {
-      if (frameForCell[kind] < 0) disableCellRow(kind, 'not provided by the database');
-    }
-  }
-  const sep = document.createElement('div');
-  sep.className = 'widget-menu-sep';
-  menu.appendChild(sep);
-  renderGroup(menu, RENDER_GROUP);
+  // a. Structures (radio) — the cells the payload provides.
+  renderRadioGroup(menu, 'cell', 'Structures', structureItems());
+  menu.appendChild(makeSep());
+  // b. Presets (radio) — render style; ray/path also bump atom + bond size.
+  renderRadioGroup(menu, 'preset', PRESET_GROUP.label, PRESET_GROUP.items);
+  menu.appendChild(makeSep());
+  // c. Bonds / Polyhedra (check toggles, reflecting live state).
+  menu.appendChild(makeToggleRow('bonds', 'Bonds', () => general.showBonds));
+  menu.appendChild(makeToggleRow('poly', 'Polyhedra', () => general.showPolyhedra));
+  menu.appendChild(makeSep());
+  // d. Open the same structure in the full UI (new tab).
+  menu.appendChild(makeActionRow('Open in CrysViz', openFullUi));
 
-  button.addEventListener('click', (e) => {
-    e.stopPropagation();
-    toggleMenu();
-  });
+  logo.addEventListener('click', (e) => { e.stopPropagation(); toggleMenu(); });
 
-  host.append(button, menu);
+  host.append(logo, menu);
   document.body.appendChild(host);
 
   document.addEventListener('click', (e) => {
@@ -202,44 +223,85 @@ function buildSettings() {
   });
 }
 
-function renderGroup(menu, group) {
+function makeSep() {
+  const sep = document.createElement('div');
+  sep.className = 'widget-menu-sep';
+  return sep;
+}
+
+/** A menu row: a check column (shown when aria-checked) + a label. */
+function makeRow(role, label) {
+  const row = document.createElement('button');
+  row.type = 'button';
+  row.className = 'widget-menu-item';
+  row.setAttribute('role', role);
+  const check = document.createElement('span');
+  check.className = 'widget-menu-check';
+  check.setAttribute('aria-hidden', 'true');
+  check.textContent = CHECK;
+  const text = document.createElement('span');
+  text.className = 'widget-menu-text';
+  text.textContent = label;
+  row.append(check, text);
+  return row;
+}
+
+function renderRadioGroup(menu, groupKey, title, items) {
   const label = document.createElement('div');
   label.className = 'widget-menu-group-label';
-  label.textContent = group.label;
+  label.textContent = title;
   menu.appendChild(label);
-
-  for (const item of group.items) {
-    const row = document.createElement('button');
-    row.type = 'button';
-    row.className = 'widget-menu-item';
-    row.setAttribute('role', 'menuitemradio');
-    row.dataset.group = group.key;
+  for (const item of items) {
+    const row = makeRow('menuitemradio', item.label);
+    row.dataset.group = groupKey;
     row.dataset.value = item.value;
-
-    const check = document.createElement('span');
-    check.className = 'widget-menu-check';
-    check.setAttribute('aria-hidden', 'true');
-    check.textContent = CHECK;
-    const text = document.createElement('span');
-    text.className = 'widget-menu-text';
-    text.textContent = item.label;
-    row.append(check, text);
-
     row.addEventListener('click', (e) => {
       e.stopPropagation();
       if (row.getAttribute('aria-disabled') === 'true') return;
-      void onSelect(group.key, item.value);
+      void onSelect(groupKey, item.value);
     });
     menu.appendChild(row);
   }
-  syncGroupChecks(group.key);
+  syncGroupChecks(groupKey);
+}
+
+/** A live check-toggle (Bonds/Polyhedra): aria-checkbox reflecting `read()`. */
+function makeToggleRow(key, label, read) {
+  const row = makeRow('menuitemcheckbox', label);
+  row.dataset.toggle = key;
+  row.setAttribute('aria-checked', read() ? 'true' : 'false');
+  row.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (key === 'bonds') {
+      general.showBonds = !general.showBonds;
+      updateVisualization({ reRenderAtoms: !!general.showPBCBonds, reRenderBonds: true, bondsUpdate: false });
+    } else {
+      general.showPolyhedra = !general.showPolyhedra;
+      updatePolyhedra();
+    }
+    row.setAttribute('aria-checked', read() ? 'true' : 'false');
+  });
+  return row;
+}
+
+function makeActionRow(label, onClick) {
+  const row = makeRow('menuitem', label);
+  row.dataset.action = 'open';
+  row.addEventListener('click', (e) => { e.stopPropagation(); closeMenu(); onClick(); });
+  return row;
+}
+
+/** "Open in CrysViz": the logo is no longer an <a>, so open via window.open
+ *  (same target=_blank/noopener the old link used; needs the iframe's
+ *  allow-popups, which the old link already required). */
+function openFullUi() {
+  window.open(fullUiHref(capturedHref), '_blank', 'noopener');
 }
 
 /** Reflect `selection[group]` onto that group's rows (aria-checked + tick). */
 function syncGroupChecks(groupKey) {
   if (!menuEl) return;
-  const rows = menuEl.querySelectorAll(`.widget-menu-item[data-group="${groupKey}"]`);
-  rows.forEach((row) => {
+  menuEl.querySelectorAll(`.widget-menu-item[data-group="${groupKey}"]`).forEach((row) => {
     const el = /** @type {HTMLElement} */ (row);
     el.setAttribute('aria-checked', el.dataset.value === selection[groupKey] ? 'true' : 'false');
   });
@@ -252,8 +314,7 @@ function disableCellVariant(kind, reason) {
   disableCellRow(kind, reason);
 }
 
-/** Grey out one Cell-menu entry with a tooltip (no variantRow bookkeeping — used
- *  by both the moyo-refusal path and frames mode). */
+/** Grey out one Structures entry with a tooltip. */
 function disableCellRow(kind, reason) {
   const row = menuEl?.querySelector(`.widget-menu-item[data-group="cell"][data-value="${kind}"]`);
   if (row) {
@@ -279,16 +340,15 @@ function closeMenu() {
 
 async function onSelect(groupKey, value) {
   closeMenu();
-  // Re-picking the already-checked entry is a no-op for BOTH groups (a repeat
-  // cell pick would otherwise re-select + re-center pointlessly).
+  // Re-picking the already-checked radio entry is a no-op.
   if (selection[groupKey] === value) return;
-  if (groupKey === 'render') {
-    selection.render = value;
-    syncGroupChecks('render');
-    applyRendering(value);
+  if (groupKey === 'preset') {
+    selection.preset = value;
+    syncGroupChecks('preset');
+    applyPreset(value);
     return;
   }
-  // Cell group.
+  // Structures group.
   const ok = await applyCell(value);
   if (ok) {
     selection.cell = value;
@@ -297,21 +357,29 @@ async function onSelect(groupKey, value) {
   }
 }
 
-// ── Rendering ──────────────────────────────────────────────────────────────
+// ── Presets ──────────────────────────────────────────────────────────────
 
-/** The rendering menu value implied by the live pipeline/style (a loaded
- *  .crysviz may have restored a non-default pair). */
-function currentRenderValue() {
+/** The preset implied by the live pipeline/style (a restored session may boot
+ *  into a non-default pair). */
+function currentPresetValue() {
   if (general.renderPipeline === 'raytrace') return 'raytrace';
   if (general.renderPipeline === 'pathtrace') return 'pathtrace';
   if (general.renderStyle === 'cel') return 'cel';
   return 'normal';
 }
 
-function applyRendering(value) {
+/** Ray/path tracing want larger spheres + fatter bonds; Normal restores the
+ *  boot defaults. Cel shading deliberately does NOT touch sizes (per the user's
+ *  letter) — so Ray→Cel keeps the big sizes until Normal is picked. */
+const PRESET_ATOM_SIZE = 0.50;
+const PRESET_BOND_RADIUS = 0.17;
+
+function applyPreset(value) {
   switch (value) {
     case 'normal':
       general.renderStyle = 'metallic';
+      general.atomSize = defaultAtomSize;
+      general.bondRadius = defaultBondRadius;
       setActivePipelineFromController('depthpeel');
       restyleAtomsBonds();
       break;
@@ -321,20 +389,21 @@ function applyRendering(value) {
       restyleAtomsBonds();
       break;
     case 'raytrace':
+    case 'pathtrace':
+      general.atomSize = PRESET_ATOM_SIZE;
+      general.bondRadius = PRESET_BOND_RADIUS;
       // Programmatic path — tolerates the missing dropdown and does NOT raise
       // the tracer performance-warning modal (that fires only from ColorPanel's
       // own <select> change handler).
-      setActivePipelineFromController('raytrace');
-      break;
-    case 'pathtrace':
-      setActivePipelineFromController('pathtrace');
+      setActivePipelineFromController(value);
+      restyleAtomsBonds();
       break;
     default:
       break;
   }
 }
 
-/** Re-render atoms/bonds with the new material style and let colour-driven
+/** Re-render atoms/bonds at the current sizes/style and let colour-driven
  *  widgets (the composition legend) refresh. */
 function restyleAtomsBonds() {
   updateVisualization({ reRenderAtoms: true, reRenderBonds: true });
@@ -388,17 +457,17 @@ async function applyCell(value) {
 }
 
 /**
- * Frames-mode cell swap: select the precomputed frame for this cell kind.
+ * Frames-mode cell swap: `value` is the frame's kind string; select that frame.
  * Recenters only when the cell dimensions change (loaded↔conventional may be
  * identical), mirroring the moyo path's post-swap recenter.
  *
- * @param {string} value 'loaded' | 'conv' | 'prim'
+ * @param {string} value a frameKinds entry
  * @returns {boolean}
  */
 function applyCellFrame(value) {
   if (!framesContainer) return false;
-  const index = frameForCell[value];
-  if (index == null || index < 0) return false; // kind not provided by the database
+  const index = framesContainer.frameKinds.indexOf(value);
+  if (index < 0) return false; // no such frame
   const before = fileBrowser.selectedStructure?.lattice;
   const after = framesContainer.structures[index]?.lattice;
   showTrajectoryFrame(index, framesContainer);

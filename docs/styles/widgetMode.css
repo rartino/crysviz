@@ -30,13 +30,22 @@ body.widget-mode .cv-colorbar-floating:not(.comp-legend-widget) {
   display: none !important;
 }
 
-/* Top-left logo: opens the same structure in the full UI (new tab). */
-body.widget-mode #widgetLogo {
+/* Logo IS the menu trigger, top-left. Its dropdown anchors to it and opens
+   below-left. */
+body.widget-mode #widgetSettings {
   position: fixed;
   top: var(--sp-3);
   left: var(--sp-3);
   z-index: var(--z-overlay-widget);
+}
+
+body.widget-mode #widgetLogo {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: transparent;
   line-height: 0;
+  cursor: pointer;
 }
 body.widget-mode #widgetLogo img {
   width: 40px;
@@ -46,42 +55,15 @@ body.widget-mode #widgetLogo img {
   opacity: 0.9;
   transition: opacity 0.15s ease;
 }
-body.widget-mode #widgetLogo:hover img {
+body.widget-mode #widgetLogo:hover img,
+body.widget-mode #widgetLogo:focus-visible img {
   opacity: 1;
-}
-
-/* Top-right settings control. */
-body.widget-mode #widgetSettings {
-  position: fixed;
-  top: var(--sp-3);
-  right: var(--sp-3);
-  z-index: var(--z-overlay-widget);
-}
-
-body.widget-mode .widget-settings-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  padding: 0;
-  font-size: var(--fs-lg);
-  color: var(--fg-1);
-  background: var(--menu-bg);
-  border: 1px solid var(--popup-border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
-  backdrop-filter: blur(var(--panel-blur));
-  cursor: pointer;
-}
-body.widget-mode .widget-settings-btn:hover {
-  background: var(--hover-color);
 }
 
 body.widget-mode .widget-settings-menu {
   position: absolute;
-  top: calc(36px + var(--sp-2));
-  right: 0;
+  top: calc(40px + var(--sp-2));
+  left: 0;
   min-width: 180px;
   padding: var(--sp-2) 0;
   background: var(--menu-bg);

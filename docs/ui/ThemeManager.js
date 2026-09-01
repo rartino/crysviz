@@ -195,6 +195,17 @@ function resolveInitialSelection() {
   // Anything not recognised (including a mode from a palette that has since
   // been removed) falls back to Auto, the intended default.
   const known = savedMode === 'auto' || manifest.palettes.some(p => offersMode(p, savedMode));
+  // Widget theme-follow: ?widget=1&theme=dark|light forces the mode at boot.
+  // Read from the URL only (opaque-origin storage stays unavailable; this never
+  // persists — applyTheme's setItem is already guarded). This is the app's first
+  // applyTheme, so there is no flash of the wrong theme.
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('widget')) {
+      const t = params.get('theme');
+      if (t === 'dark' || t === 'light') return { palette, mode: t };
+    }
+  } catch { /* URL unavailable → fall through to the normal default */ }
   return { palette, mode: known ? savedMode : 'auto' };
 }
 
