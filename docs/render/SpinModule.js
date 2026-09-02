@@ -20,6 +20,11 @@ const LOG_EPS = 1e-6;
 // so it borrows ForceModule.js's own range for a consistent look.
 const ARROW_LEN_MIN = 0.3;
 const ARROW_LEN_MAX = 2.0;
+// Minimum rendered magnitude for an arrow to be drawn at all. Shared by
+// updateSpins()'s draw cutoff and autoSpinScale()'s "magnetic" classification
+// so the auto scale sizes off exactly the arrows that actually appear — a spin
+// below this never draws, so it must not drag the scale down either.
+const SPIN_DRAW_THRESHOLD = 0.05;
 
 function disposeSpinMeshes() {
   for (const key of ['spinShaftMesh', 'spinTipMesh']) {
@@ -240,7 +245,7 @@ export function updateSpins(spinFactor = 1.0, useManualSpins = false, manualSpin
 
     const v = spin.vector;
     const mag = Math.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2);
-    if (mag < 0.05) continue;
+    if (mag < SPIN_DRAW_THRESHOLD) continue;
 
     // Linear mode: length directly proportional to magnitude (unchanged).
     // Log mode: same compressed-into-a-fixed-window shape ForceModule.js
@@ -374,10 +379,17 @@ export function updateSpins(spinFactor = 1.0, useManualSpins = false, manualSpin
 
 /**
  * Auto length-scale for spin arrows: scale the LONGEST arrow to
- *   d_target = min( 0.9·d_nn(mag→non-mag), 0.9·0.5·d_nn(mag→mag) )
+ *   d_target = 0.9 · min( d_nn(mag→non-mag), d_nn(mag→mag) )
  * where d_nn are shortest nearest-neighbour distances over the WRAPPED
  * cartesian positions (periodic copies in, so minimum-image neighbours count),
- * and "magnetic" = |spin| > 1e-6. Returns d_target / L_max, or null when no
+ * and "magnetic" = |spin| ≥ SPIN_DRAW_THRESHOLD (the same cutoff updateSpins()
+ * draws by, so an arrow too short to render never shrinks the scale). Arrows
+ * render CENTERED on their atom (see updateSpins: shaftHalfLen = totalLen/2,
+ * assembly midpoint at the atom), so an arrow of length d_target extends only
+ * d_target/2 toward a neighbour. The non-touching cap for an ANTIPARALLEL
+ * magnetic pair is therefore the full separation d (each arrow reaches d/2 from
+ * its own atom, meeting in the middle), not d/2 — hence the plain 0.9·d on the
+ * mag→mag term too, no extra 0.5. Returns d_target / L_max, or null when no
  * usable term exists. Edge cases: no non-magnetic atoms → only the mag-pair
  * term; fewer than two magnetic atoms → only the mag→non-mag term; neither
  * computable → null. Log-length mode still sizes off this linear L_max (the
@@ -399,7 +411,9 @@ export function autoSpinScale(structure, spins = structure?.spins ?? [], { manua
     const v = spin?.vector;
     if (!v) return;
     const mag = Math.hypot(v[0], v[1], v[2]);
-    if (mag <= 1e-6) return;
+    // Same cutoff updateSpins() draws by (mag < threshold → no arrow): a spin
+    // too short to render must not count as magnetic here either.
+    if (mag < SPIN_DRAW_THRESHOLD) return;
     magnetic.add(manual ? (spin.atomIndex ?? i) : i);
     Lmax = Math.max(Lmax, mag * (spin.scaling ?? 1.0));
   });
@@ -428,8 +442,9 @@ export function autoSpinScale(structure, spins = structure?.spins ?? [], { manua
   const terms = [];
   if (Number.isFinite(dMagNon)) terms.push(0.9 * dMagNon);
   // Only when there are ≥2 distinct magnetic atoms (a lone magnetic atom's
-  // periodic copies aren't a "magnetic pair" for this purpose).
-  if (magnetic.size >= 2 && Number.isFinite(dMagMag)) terms.push(0.9 * 0.5 * dMagMag);
+  // periodic copies aren't a "magnetic pair" for this purpose). Plain 0.9·d,
+  // same as the mag→non-mag term: centered arrows make d (not d/2) the cap.
+  if (magnetic.size >= 2 && Number.isFinite(dMagMag)) terms.push(0.9 * dMagMag);
   if (!terms.length) return null;
   return Math.min(...terms) / Lmax;
 }

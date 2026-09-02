@@ -124,15 +124,17 @@ export function addSpinPanel(target = "cvPanelBody-spins") {
   logLengthLabel.appendChild(logLengthCheckbox);
   logLengthLabel.appendChild(document.createTextNode("log length"));
 
-  // "Auto" sets Global Scaling so the longest arrow renders a little shorter
-  // than the nearest magnetic-atom neighbour distance (see autoScaleBtn handler).
+  // "Auto" sets Global Scaling so the longest (centered) arrow spans a little
+  // less than the nearest magnetic-atom neighbour distance — i.e. reaches just
+  // short of half that distance on each side (see autoScaleBtn handler).
   const autoScaleBtn = document.createElement("button");
   autoScaleBtn.type = "button";
   autoScaleBtn.textContent = "Auto";
   autoScaleBtn.id = "spinAutoScaleBtn";
   autoScaleBtn.className = "file-action-btn cv-spin-auto-scale";
-  autoScaleBtn.title = "Set the length scale so the longest spin is a little "
-    + "shorter than the nearest neighbour of a magnetic atom.";
+  autoScaleBtn.title = "Set the length scale so the longest spin arrow, "
+    + "centered on its atom, spans a little less than the distance to the "
+    + "nearest neighbour of a magnetic atom.";
 
   lengthTopRow.appendChild(lengthLabel);
   lengthTopRow.appendChild(logLengthLabel);
