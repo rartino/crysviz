@@ -71,6 +71,15 @@ body.widget-mode .widget-settings-menu {
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
   backdrop-filter: blur(var(--panel-blur));
+  /* Never taller than the space below the anchor (logo top var(--sp-3) + the
+     40px logo + the menu's own var(--sp-2) offset, plus a var(--sp-3) bottom
+     gap); scroll internally past that. The widget IS the iframe viewport, so
+     dvh is the canvas height. */
+  /* border-box so max-height bounds the WHOLE box (padding + border), not just
+     the content — otherwise those spill past the viewport. */
+  box-sizing: border-box;
+  max-height: calc(100dvh - var(--sp-3) - 40px - var(--sp-2) - var(--sp-3));
+  overflow-y: auto;
 }
 
 body.widget-mode .widget-menu-group-label {
@@ -147,9 +156,18 @@ body.widget-mode .widget-boot-error {
    (--comp-legend-widget-fg), so the embed reads the same in every theme. The
    px bases below stay multiplied by --legend-scale so the box still scales as
    one; only the base sizes shrink. */
+body.widget-mode .comp-legend-widget {
+  top: auto !important;
+  bottom: var(--sp-3) !important;
+  left: var(--sp-3) !important;
+}
 body.widget-mode .comp-legend-body {
   padding: var(--sp-2);
   background: var(--comp-legend-widget-bg);
+  /* Fully visible for any species count: cap to the canvas minus top/bottom
+     gaps and scroll the rows internally past that. */
+  max-height: calc(100dvh - 2 * var(--sp-3) - var(--sp-4));
+  overflow-y: auto;
 }
 body.widget-mode .comp-legend-list {
   gap: calc(4px * var(--legend-scale));

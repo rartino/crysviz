@@ -601,16 +601,11 @@ function openCompositionLegend() {
   // top-left furniture (the measurement toolbar).
   if (lastAnchor) {
     drag.floatAtAnchor(lastAnchor);
-  } else if (document.body.classList.contains('widget-mode')) {
-    // Widget mode: open toward the LOWER-LEFT of the view (the logo/menu owns
-    // the top-left). floatAt clamps to the scene, so a small height miss is safe.
-    const view = document.getElementById('view')?.getBoundingClientRect();
-    const margin = 16;
-    const boxH = wrapper.offsetHeight || 120;
-    drag.floatAt((view?.left ?? 0) + margin,
-      (view?.bottom ?? window.innerHeight) - boxH - margin);
   } else {
     const view = document.getElementById('view')?.getBoundingClientRect();
+    // Widget mode pins the legend to the lower-left by its BOTTOM edge (grows
+    // upward, capped + scrollable) purely in CSS (docs/styles/widgetMode.css),
+    // so this only needs to float it (attach + size); CSS overrides the offset.
     drag.floatAt((view?.left ?? 0) + 40, (view?.top ?? 0) + 200); // clear of the axis toolbar
   }
 }
