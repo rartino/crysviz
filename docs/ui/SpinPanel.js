@@ -131,7 +131,7 @@ export function addSpinPanel(target = "cvPanelBody-spins") {
   autoScaleBtn.type = "button";
   autoScaleBtn.textContent = "Auto";
   autoScaleBtn.id = "spinAutoScaleBtn";
-  autoScaleBtn.className = "file-action-btn cv-spin-auto-scale";
+  autoScaleBtn.className = "file-action-btn cv-auto-range-btn";
   autoScaleBtn.title = "Set the length scale so the longest spin arrow, "
     + "centered on its atom, spans a little less than the distance to the "
     + "nearest neighbour of a magnetic atom.";
