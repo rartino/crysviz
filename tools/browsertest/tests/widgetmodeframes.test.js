@@ -81,6 +81,19 @@ const clickCell = (page, value) => page.evaluate((v) => {
   document.querySelector(`.widget-menu-item[data-group="cell"][data-value="${v}"]`).click();
 }, value);
 
+/** Decode a captured "Open in CrysViz" URL's #load-file= payload — same codec
+ *  as FileURLLoader.js/WidgetMode.js (decodeURIComponent → atob → utf8 JSON),
+ *  done here in Node since window.open's argument is just a string. Returns
+ *  null if the URL carries no matching hash. */
+function decodeLoadFileFragment(url) {
+  const hashIdx = url.indexOf('#load-file=');
+  if (hashIdx < 0) return null;
+  const parts = url.slice(hashIdx + '#load-file='.length).split('|');
+  if (parts.length !== 2) return null;
+  const b64 = decodeURIComponent(parts[1]);
+  return JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
+}
+
 /** Every atom's model color must equal its own element's default — guards
  *  StructureContainer.flushColorToAllStructures against stamping the loaded
  *  frame's index-aligned colors onto a cell-variant frame whose element
@@ -159,6 +172,32 @@ const waitForCell = (page, atoms) => H.waitFor(page, `(async () => {
   const primColors = await badElementColors(page);
   H.check('frames: Primitive atom colors match their own element defaults',
     primColors.length === 0, JSON.stringify(primColors));
+
+  // While Primitive is selected: "Open in CrysViz" must carry THIS frame
+  // (index 2), not always the as-loaded one. Stub window.open to capture the
+  // URL the logo menu's action row opens.
+  await page.evaluate(() => {
+    window.__openedUrls = [];
+    window.open = (u) => { window.__openedUrls.push(String(u)); return null; };
+  });
+  await page.evaluate(() => {
+    document.querySelector('.widget-menu-item[data-action="open"]').click();
+  });
+  const primOpenedUrl = await page.evaluate(() => window.__openedUrls[0]);
+  H.check('frames: Open in CrysViz (primitive selected) captured a URL', !!primOpenedUrl, String(primOpenedUrl));
+  H.check('frames: Open in CrysViz (primitive selected) has no widget param',
+    !!primOpenedUrl && !new URL(primOpenedUrl).searchParams.has('widget'), String(primOpenedUrl));
+  const primOpenedState = primOpenedUrl ? decodeLoadFileFragment(primOpenedUrl) : null;
+  H.check('frames: Open in CrysViz (primitive selected) carries selectedFrameIndex=2',
+    primOpenedState?.selectedFrameIndex === 2, JSON.stringify(primOpenedState?.selectedFrameIndex));
+  H.check('frames: Open in CrysViz payload keeps all 3 frames + frameKinds intact',
+    primOpenedState?.frames?.length === 3
+      && JSON.stringify(primOpenedState?.frameKinds) === JSON.stringify(['loaded', 'conventional', 'primitive']),
+    JSON.stringify({ frames: primOpenedState?.frames?.length, frameKinds: primOpenedState?.frameKinds }));
+  const primOpenedFrame2 = primOpenedState?.frames?.[2];
+  H.check('frames: Open in CrysViz payload frame 2 (primitive) content unchanged (2 atoms, Fe/O)',
+    primOpenedFrame2?.elements?.length === 2 && JSON.stringify(primOpenedFrame2.elements) === JSON.stringify(['Fe', 'O']),
+    JSON.stringify(primOpenedFrame2?.elements));
 
   // Back to As loaded.
   await clickCell(page, 'loaded');

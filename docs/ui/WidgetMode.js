@@ -153,6 +153,51 @@ function fullUiHref(href) {
   }
 }
 
+/** The launch URL with its payload's `selectedFrameIndex` rewritten to the
+ *  frame currently on screen — the full app reloads FROM this payload (see
+ *  ShareModule.applySharedState), so this is what makes "Open in CrysViz"
+ *  open what the user is actually looking at instead of always the as-loaded
+ *  frame. Moyo-built variants aren't in the launch payload at all (they're
+ *  computed in-browser), so moyo fallback mode is out of scope and left
+ *  unchanged; any parse hiccup also falls back to the unchanged href, since
+ *  opening the as-loaded frame is a safe degradation and the menu action must
+ *  never be blocked by it. */
+function hrefForCurrentFrame(href) {
+  if (!framesContainer) return href;
+  const index = framesContainer.structures.indexOf(fileBrowser.selectedStructure);
+  if (index < 0) return href;
+
+  const hashIdx = href.indexOf('#load-file=');
+  if (hashIdx < 0) return href;
+  const rawHash = href.slice(hashIdx + '#load-file='.length);
+  // Split BEFORE decoding, like FileURLLoader.js: an encoded filename pipe
+  // (%7C) must not be mistaken for the separator.
+  const parts = rawHash.split('|');
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return href;
+  const [encodedFilename, encodedContent] = parts;
+
+  try {
+    const b64 = decodeURIComponent(encodedContent);
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const state = JSON.parse(new TextDecoder().decode(bytes));
+    state.selectedFrameIndex = index;
+
+    const newBytes = new TextEncoder().encode(JSON.stringify(state));
+    // Chunked to dodge the String.fromCharCode argument-limit overflow on
+    // large payloads (same pattern the altermagnets embedder uses).
+    let binaryOut = '';
+    for (let o = 0; o < newBytes.length; o += 0x8000) {
+      binaryOut += String.fromCharCode.apply(null, newBytes.subarray(o, o + 0x8000));
+    }
+    const newEncodedContent = encodeURIComponent(btoa(binaryOut));
+    return href.slice(0, hashIdx) + '#load-file=' + encodedFilename + '|' + newEncodedContent;
+  } catch {
+    return href;
+  }
+}
+
 const PRESET_GROUP = {
   key: 'preset',
   label: 'Presets',
@@ -316,7 +361,7 @@ function makeActionRow(label, onClick) {
  *  (same target=_blank/noopener the old link used; needs the iframe's
  *  allow-popups, which the old link already required). */
 function openFullUi() {
-  window.open(fullUiHref(capturedHref), '_blank', 'noopener');
+  window.open(fullUiHref(hrefForCurrentFrame(capturedHref)), '_blank', 'noopener');
 }
 
 /** Reflect `selection[group]` onto that group's rows (aria-checked + tick). */
