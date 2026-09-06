@@ -106,6 +106,51 @@ const clickCell = (page, value) => page.evaluate((v) => {
   H.check('AFM: Conventional keeps the 2-up / 2-down / 4-zero sublattice pattern',
     !!conv && conv.up === 2 && conv.down === 2 && conv.zero === 4, JSON.stringify(conv));
 
+  // Regression (Spin.js's `color = []` truthy-default bug): moyo-remapped
+  // spins (WidgetMode.js's remapSpins) construct `new Spin(...)` with no
+  // `color` key, so they must fall through to the constructor's teal
+  // default (#008080) at both the model level (spin.color) and the render
+  // buffer (SpinModule.js's instanceColor, written verbatim from color.r/g/b
+  // with no color-space conversion) — not white, which is what the `[]`
+  // truthy-default produced (new THREE.Color([]) leaves r=g=b=1).
+  const tealCheck = await page.evaluate(async () => {
+    const { fileBrowser, groups } = await import('./state/store.js');
+    const THREE = await import('./external/three/three.module.js');
+    const teal = new THREE.Color('#008080');
+    const s = fileBrowser.selectedStructure;
+    const SPIN_DRAW_THRESHOLD = 0.05; // same cutoff SpinModule.js draws by
+    const modelMismatches = [];
+    let firstDrawnSrcIdx = null;
+    s.spins.forEach((sp, i) => {
+      const mag = Math.sqrt(sp.vector[0] ** 2 + sp.vector[1] ** 2 + sp.vector[2] ** 2);
+      if (mag < SPIN_DRAW_THRESHOLD) return;
+      if (firstDrawnSrcIdx === null) firstDrawnSrcIdx = i;
+      const c = sp.color;
+      if (Math.abs(c.r - teal.r) > 1e-4 || Math.abs(c.g - teal.g) > 1e-4 || Math.abs(c.b - teal.b) > 1e-4) {
+        modelMismatches.push({ i, r: c.r, g: c.g, b: c.b });
+      }
+    });
+    let bufferColor = null;
+    if (firstDrawnSrcIdx !== null) {
+      const instance = groups.spinsInstanceBySrcIndex?.get(firstDrawnSrcIdx);
+      if (instance != null && groups.spinShaftMesh) {
+        const out = new THREE.Color();
+        groups.spinShaftMesh.getColorAt(instance * 2, out);
+        bufferColor = { r: out.r, g: out.g, b: out.b };
+      }
+    }
+    return { teal: { r: teal.r, g: teal.g, b: teal.b }, modelMismatches, bufferColor };
+  });
+  H.check('Conventional: model spin colors are the Spin default teal (#008080)',
+    tealCheck.modelMismatches.length === 0,
+    JSON.stringify({ mismatches: tealCheck.modelMismatches, expected: tealCheck.teal }));
+  H.check('Conventional: first drawn arrow\'s buffer color matches the model teal',
+    !!tealCheck.bufferColor &&
+    Math.abs(tealCheck.bufferColor.r - tealCheck.teal.r) < 1e-4 &&
+    Math.abs(tealCheck.bufferColor.g - tealCheck.teal.g) < 1e-4 &&
+    Math.abs(tealCheck.bufferColor.b - tealCheck.teal.b) < 1e-4,
+    JSON.stringify({ buffer: tealCheck.bufferColor, expected: tealCheck.teal }));
+
   // ---- (c) spin-less: cell swap works, no spin work -------------------------
   await loadWidget(page, fixtureJson(null));
   await clickCell(page, 'prim');
