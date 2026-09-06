@@ -2,6 +2,7 @@ import * as THREE from '../external/three/three.module.js';
 
 import {app, groups, fileBrowser, general} from '../state/store.js';
 import {getLatticeVisSettings} from '../defaults/color_texture_defaults.js'
+import {getElementRadius} from '../defaults/radii_defaults.js'
 
 import {disposeGroup} from '../ui/WindowAndSceneControls.js'
 import {getBondCutoff} from './BondsFracUpdateModule.js'
@@ -432,6 +433,20 @@ export function getCellCenterAndDist() {
   let radius = 0;
   for (const v of vertices) radius = Math.max(radius, v.distanceTo(center));
   radius = Math.max(radius, 1); // guard a degenerate/zero-size cell
+
+  // Atoms are drawn as spheres, and periodic images sit exactly on the cell
+  // faces/corners, so the true drawn extent can exceed the cell-vertex radius
+  // above by up to one atom radius. Grow radius to cover it — falls back to
+  // the cell-vertex radius when there's no atom data yet (early load, some
+  // orthographic-camera paths).
+  const wrapped = fileBrowser.selectedStructure.periodic?.visibleWrapped;
+  if (wrapped?.cart?.length) {
+    const atomSize = general.atomSize ?? 1;
+    for (let i = 0; i < wrapped.cart.length; i++) {
+      const drawnRadius = getElementRadius(wrapped.elements[i]) * atomSize;
+      radius = Math.max(radius, new THREE.Vector3(...wrapped.cart[i]).distanceTo(center) + drawnRadius);
+    }
+  }
 
   // Distance so the bounding sphere fits entirely inside the perspective
   // camera's frustum (45° vertical FOV, matching switchCameraType's

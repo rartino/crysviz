@@ -3,6 +3,7 @@ import { app, fileBrowser, groups, general } from '../state/store.js';
 import { getColorFromMap, getElementDefaultColor } from '../defaults/color_texture_defaults.js';
 import { createArrowMaterial, addArrowEmissiveAttributes } from './ArrowMaterial.js';
 import { refreshForceHistogram } from '../ui/AnalysisPanels/ForceHistogram.js';
+import { requestRender } from './AnimateModule.js';
 
 const SHAFT_SEGS = 20;
 const TIP_SEGS = 20;
@@ -32,6 +33,7 @@ function disposeForceMeshes() {
 
 export function removeForces() {
   disposeForceMeshes();
+  requestRender(); // on-demand rendering (AnimateModule.js) needs a nudge to repaint
 }
 
 /**
@@ -101,7 +103,7 @@ export function updateForces(forceFactor = general.forceScale ?? 1.0, colorMap =
   // Histogram panel (if open) tracks the current frame's forces regardless of
   // which of the many updateForces() call sites triggered this render.
   refreshForceHistogram(structure);
-  if (!structure?.periodic?.wrapped) { disposeForceMeshes(); return; }
+  if (!structure?.periodic?.wrapped) { disposeForceMeshes(); requestRender(); return; }
 
   const wrapped = structure.periodic.visibleWrapped;
   const shaftDiameter = general.forceRadius ?? 0.08;
@@ -109,7 +111,7 @@ export function updateForces(forceFactor = general.forceScale ?? 1.0, colorMap =
   const tipLength = TIP_LENGTH * (shaftDiameter / 0.08);
 
   const forces = structure.forces;
-  if (!forces?.length) { disposeForceMeshes(); return; }
+  if (!forces?.length) { disposeForceMeshes(); requestRender(); return; }
 
   // Update force colors based on colormap
   const minValue = general.forceMin || 0;
@@ -246,7 +248,7 @@ export function updateForces(forceFactor = general.forceScale ?? 1.0, colorMap =
 
   if (!groups.forcesShaftMesh || groups.forcesShaftMesh.count !== count * 2) {
     disposeForceMeshes();
-    if (count === 0) return;
+    if (count === 0) { requestRender(); return; }
 
     const shaftGeo = new THREE.CylinderGeometry(1, 1, 1, SHAFT_SEGS, 1);
     // Same PBR preset atoms/bonds use (render/MaterialStyles.js) — a
@@ -360,4 +362,6 @@ export function updateForces(forceFactor = general.forceScale ?? 1.0, colorMap =
   groups.forcesTipMesh.instanceColor.needsUpdate = true;
   groups.forcesTipMesh.geometry.attributes.instanceEmissive.needsUpdate = true;
   groups.forcesTipMesh.geometry.attributes.instanceEmissiveIntensity.needsUpdate = true;
+
+  requestRender(); // on-demand rendering (AnimateModule.js) needs a nudge to repaint
 }

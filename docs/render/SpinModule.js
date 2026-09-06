@@ -2,6 +2,7 @@ import * as THREE from '../external/three/three.module.js';
 import { app, fileBrowser, groups, general } from '../state/store.js';
 import { getColorFromMap, getElementDefaultColor } from '../defaults/color_texture_defaults.js';
 import { createArrowMaterial, addArrowEmissiveAttributes } from './ArrowMaterial.js';
+import { requestRender } from './AnimateModule.js';
 
 
 
@@ -41,10 +42,12 @@ function disposeSpinMeshes() {
 
 export function removeSpins() {
   disposeSpinMeshes();
+  requestRender(); // on-demand rendering (AnimateModule.js) needs a nudge to repaint
 }
 
 export function deleteSpins() {
   disposeSpinMeshes();
+  requestRender(); // see removeSpins() above
 }
 
 /**
@@ -112,7 +115,7 @@ export function computeSpinColor(vector, scaling, {
 
 export function updateSpins(spinFactor = 1.0, useManualSpins = false, manualSpins = [], colorMap = "none") {
   const structure = fileBrowser.selectedStructure;
-  if (!structure?.periodic?.wrapped) { disposeSpinMeshes(); return; }
+  if (!structure?.periodic?.wrapped) { disposeSpinMeshes(); requestRender(); return; }
 
   const wrapped = structure.periodic.visibleWrapped;
   const shaftDiameter = general.spinRadius ?? 0.08;
@@ -126,7 +129,7 @@ export function updateSpins(spinFactor = 1.0, useManualSpins = false, manualSpin
     spins = structure.spins;
   }
 
-  if (!spins?.length) { disposeSpinMeshes(); return; }
+  if (!spins?.length) { disposeSpinMeshes(); requestRender(); return; }
 
   // Update spin colors based on colormap
   const minValue = general.spinMin || 0;
@@ -270,7 +273,7 @@ export function updateSpins(spinFactor = 1.0, useManualSpins = false, manualSpin
 
   if (!groups.spinShaftMesh || groups.spinShaftMesh.count !== count * 2) {
     disposeSpinMeshes();
-    if (count === 0) return;
+    if (count === 0) { requestRender(); return; }
 
     const shaftGeo = new THREE.CylinderGeometry(1, 1, 1, SHAFT_SEGS, 1);
     // Same PBR preset atoms/bonds use (render/MaterialStyles.js) — a
@@ -386,6 +389,8 @@ export function updateSpins(spinFactor = 1.0, useManualSpins = false, manualSpin
   groups.spinTipMesh.instanceColor.needsUpdate = true;
   groups.spinTipMesh.geometry.attributes.instanceEmissive.needsUpdate = true;
   groups.spinTipMesh.geometry.attributes.instanceEmissiveIntensity.needsUpdate = true;
+
+  requestRender(); // on-demand rendering (AnimateModule.js) needs a nudge to repaint
 }
 
 /**
