@@ -81,6 +81,25 @@ const clickCell = (page, value) => page.evaluate((v) => {
   document.querySelector(`.widget-menu-item[data-group="cell"][data-value="${v}"]`).click();
 }, value);
 
+/** Every atom's model color must equal its own element's default — guards
+ *  StructureContainer.flushColorToAllStructures against stamping the loaded
+ *  frame's index-aligned colors onto a cell-variant frame whose element
+ *  sequence differs (e.g. conventional/primitive frames from `frameKinds`).
+ *  Returns the list of mismatching {i, element, color, elementColor, want}. */
+const badElementColors = (page) => page.evaluate(async () => {
+  const { fileBrowser } = await import('./state/store.js');
+  const { getElementDefaultColor } = await import('./defaults/color_texture_defaults.js');
+  const s = fileBrowser.selectedStructure;
+  const bad = [];
+  s.atoms.forEach((atom, i) => {
+    const want = getElementDefaultColor(s.elements[i]);
+    if (atom.color !== want || atom.elementColor !== want) {
+      bad.push({ i, element: s.elements[i], color: atom.color, elementColor: atom.elementColor, want });
+    }
+  });
+  return bad;
+});
+
 /** Poll until the selected structure has exactly `atoms` atoms; returns the
  *  atom/spin/mesh snapshot (or null while it hasn't landed). H.waitFor forwards
  *  no args to page.evaluate, so the count is baked into a string expression. */
@@ -122,11 +141,24 @@ const waitForCell = (page, atoms) => H.waitFor(page, `(async () => {
     document.querySelector('.widget-menu-item[data-group="cell"][data-value="conventional"]').getAttribute('aria-checked'));
   H.check('frames: Conventional is marked checked', convChecked === 'true', String(convChecked));
 
+  // Conventional's element sequence ([Fe,Fe,O,O]) mismatches loaded's
+  // ([Fe,Fe,Fe,Fe,O,O,O,O]) at indices 2,3 (Fe there, O here) — the flush from
+  // the loaded frame must not have bled Fe's color onto these O sites.
+  const convColors = await badElementColors(page);
+  H.check('frames: Conventional atom colors match their own element defaults',
+    convColors.length === 0, JSON.stringify(convColors));
+
   // Cell → Primitive selects the 2-atom frame.
   await clickCell(page, 'primitive');
   const prim = await waitForCell(page, 2);
   H.check('frames: Primitive switches to the 2-atom frame, spins index-aligned',
     !!prim && prim.atoms === 2 && prim.spins === 2 && prim.shaft > 0, JSON.stringify(prim));
+
+  // Primitive's element sequence ([Fe,O]) mismatches loaded's at index 1 (Fe
+  // there, O here) — same guard, different frame.
+  const primColors = await badElementColors(page);
+  H.check('frames: Primitive atom colors match their own element defaults',
+    primColors.length === 0, JSON.stringify(primColors));
 
   // Back to As loaded.
   await clickCell(page, 'loaded');

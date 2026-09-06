@@ -47,6 +47,11 @@ export class StructureContainer {
 
       // Copy atom colors
       structure.atoms.forEach((atom, atomIndex) => {
+        // Index-aligned copy is only meaningful between same-element sites.
+        // Cell-variant frames (widget `frameKinds` payloads) can have different
+        // counts/sequences; for true trajectories elements always match per
+        // index, so this guard is a no-op there.
+        if (structure.elements[atomIndex] !== targetStructure.elements[atomIndex]) return;
         if (targetStructure.atoms[atomIndex]) {
           atom.color = targetStructure.atoms[atomIndex].color;
           atom.opacity = targetStructure.atoms[atomIndex].opacity;
