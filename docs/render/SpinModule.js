@@ -282,6 +282,16 @@ export function updateSpins(spinFactor = 1.0, useManualSpins = false, manualSpin
     groups.spinShaftMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(count * 2 * 3), 3);
     groups.spinShaftMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     groups.spinShaftMesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    // The mesh sits at the world origin and every instance is placed via
+    // setMatrixAt below, so three.js's per-instance auto bounding sphere (see
+    // InstancedMesh.computeBoundingSphere) is only ever computed once, lazily,
+    // the first time it's needed — later setMatrixAt calls (a rebuild that
+    // reuses this same mesh because the arrow count didn't change) never
+    // invalidate that cached sphere. A stale sphere from a previous
+    // arrangement culled the whole batch until camera motion produced a
+    // frustum that happened to still intersect it. Same fix/precedent as
+    // RayTracingPipeline.js's meshes.
+    groups.spinShaftMesh.frustumCulled = false;
     addArrowEmissiveAttributes(groups.spinShaftMesh, count * 2);
     app.scene.add(groups.spinShaftMesh);
 
@@ -291,6 +301,7 @@ export function updateSpins(spinFactor = 1.0, useManualSpins = false, manualSpin
     groups.spinTipMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
     groups.spinTipMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     groups.spinTipMesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    groups.spinTipMesh.frustumCulled = false; // see spinShaftMesh above
     addArrowEmissiveAttributes(groups.spinTipMesh, count);
     app.scene.add(groups.spinTipMesh);
   }

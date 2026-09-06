@@ -258,6 +258,14 @@ export function updateForces(forceFactor = general.forceScale ?? 1.0, colorMap =
     groups.forcesShaftMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(count * 2 * 3), 3);
     groups.forcesShaftMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     groups.forcesShaftMesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    // Same latent bug as SpinModule.js's arrows: this mesh sits at the world
+    // origin with every instance placed via setMatrixAt, so three.js's
+    // per-instance auto bounding sphere is only computed once, lazily — a
+    // rebuild that reuses this mesh (count unchanged) moves instances without
+    // invalidating that cached sphere, which can leave the whole batch culled
+    // until camera motion produces a frustum that happens to still intersect
+    // the stale sphere.
+    groups.forcesShaftMesh.frustumCulled = false;
     addArrowEmissiveAttributes(groups.forcesShaftMesh, count * 2);
     app.scene.add(groups.forcesShaftMesh);
 
@@ -267,6 +275,7 @@ export function updateForces(forceFactor = general.forceScale ?? 1.0, colorMap =
     groups.forcesTipMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
     groups.forcesTipMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     groups.forcesTipMesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    groups.forcesTipMesh.frustumCulled = false; // see forcesShaftMesh above
     addArrowEmissiveAttributes(groups.forcesTipMesh, count);
     app.scene.add(groups.forcesTipMesh);
   }
