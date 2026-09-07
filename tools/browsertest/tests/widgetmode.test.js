@@ -169,6 +169,11 @@ function fixtureJson() {
     const legendVisible = !!legend && legend.offsetParent !== null
       && getComputedStyle(legend).display !== 'none';
     const scene = app.gizmoScene;
+    // Base --gizmo-size (theme token) vs the widget's rendered box: the embed
+    // pins the gizmo at 2.5x. The renderer canvas must track the div box, so
+    // resizeGizmoRenderer() actually scaled the drawing, not just the frame.
+    const baseSize = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--gizmo-size'));
+    const canvas = g.querySelector('canvas');
     return {
       gizmoVisible: g.offsetParent !== null && getComputedStyle(g).display !== 'none',
       leftEdgeGap: gr.left - view.left,
@@ -179,6 +184,9 @@ function fixtureJson() {
       bVisible: !!scene?.userData?.bLabel?.visible,
       cVisible: !!scene?.userData?.cLabel?.visible,
       legendVisible,
+      baseSize,
+      boxWidth: gr.width,
+      canvasWidth: canvas ? canvas.getBoundingClientRect().width : null,
     };
   });
   H.check('axes gizmo is visible, anchored lower-left of the view (left/bottom edges within 40px)',
@@ -190,6 +198,10 @@ function fixtureJson() {
     gizmo.labelsOnArrows === true && gizmo.aVisible && gizmo.bVisible && gizmo.cVisible,
     JSON.stringify(gizmo));
   H.check('the separate #axesLegend box is not shown', gizmo.legendVisible === false, JSON.stringify(gizmo));
+  H.check('widget gizmo box is 2.5x the base --gizmo-size',
+    gizmo.baseSize > 0 && Math.abs(gizmo.boxWidth - gizmo.baseSize * 2.5) < 2, JSON.stringify(gizmo));
+  H.check('gizmo renderer canvas tracks the enlarged box (drawing scaled, not just the frame)',
+    gizmo.canvasWidth != null && Math.abs(gizmo.canvasWidth - gizmo.boxWidth) < 2, JSON.stringify(gizmo));
 
   // --- Logo IS the menu trigger; no cog ------------------------------------
   const menu = await page.evaluate(() => {

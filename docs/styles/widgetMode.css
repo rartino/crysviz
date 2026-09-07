@@ -162,6 +162,12 @@ body.widget-mode .widget-boot-error {
 body.widget-mode #axesGizmo {
   left: var(--sp-3);
   bottom: var(--sp-3);
+  /* 2.5x the base size for the embed. The div's box is the single source of
+     scale: WidgetMode.js's resizeGizmoRenderer() sizes the renderer to it, the
+     arrows render proportionally larger, and the on-arrow labels are
+     viewport-relative sprites (sizeAttenuation:false), so they grow with it. */
+  width: calc(var(--gizmo-size) * 2.5);
+  height: calc(var(--gizmo-size) * 2.5);
   pointer-events: none;
 }
 
