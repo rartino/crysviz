@@ -2423,7 +2423,7 @@ justify-content: center;
 }
 
 #optimadeWarningDialog::backdrop {
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--overlay);
 }
 
 #optimadeWarningDialog h2 {
