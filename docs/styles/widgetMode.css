@@ -8,15 +8,15 @@
 
 /* Scene furniture and floating chrome that survive panel-hidden. The floating
    panel windows (.cv-panel) and non-legend colour bars re-parent to <body>, so
-   they need their own hide rules. The composition legend is kept: it is the one
-   floating widget widget mode shows. */
+   they need their own hide rules. The composition legend and axes gizmo are
+   kept: they are the floating widgets widget mode shows (see the pinned
+   positions below). */
 body.widget-mode #mobileMenuToggle,
 body.widget-mode #mobileOverlay,
 body.widget-mode #backgroundDot,
 body.widget-mode #measurementTools,
 body.widget-mode #cameraTools,
 body.widget-mode #structureInfoContent,
-body.widget-mode #axesGizmo,
 body.widget-mode #axesLegend,
 body.widget-mode #aboutOverlay,
 body.widget-mode #raytraceWarningModal,
@@ -151,15 +151,31 @@ body.widget-mode .widget-boot-error {
   z-index: var(--z-overlay-widget);
 }
 
+/* Axes gizmo, widget-mode only: pinned lower-left with the widget's own
+   spacing (the composition legend below takes the lower-right instead).
+   WidgetMode.js forces general.gizmoLabelsOnArrows on, so the a/b/c letters
+   ride on the arrows as billboarded sprites and the separate #axesLegend box
+   stays hidden above. pointer-events: none — same reasoning as the legend's
+   lock below: purely decorative furniture in the embed, no dragging and no
+   long-press menu. The extra body.widget-mode class makes this more specific
+   than the base #axesGizmo rule (styles.css), so no !important is needed. */
+body.widget-mode #axesGizmo {
+  left: var(--sp-3);
+  bottom: var(--sp-3);
+  pointer-events: none;
+}
+
 /* Composition legend, widget-mode only: moderately smaller and on a fixed very
    light-gray surface (--comp-legend-widget-bg) with fixed dark text
    (--comp-legend-widget-fg), so the embed reads the same in every theme. The
    px bases below stay multiplied by --legend-scale so the box still scales as
-   one; only the base sizes shrink. */
+   one; only the base sizes shrink. Pinned lower-right (the axes gizmo above
+   takes the lower-left). */
 body.widget-mode .comp-legend-widget {
   top: auto !important;
   bottom: var(--sp-3) !important;
-  left: var(--sp-3) !important;
+  right: var(--sp-3) !important;
+  left: auto !important;
 }
 body.widget-mode .comp-legend-body {
   padding: var(--sp-2);

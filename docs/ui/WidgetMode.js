@@ -9,7 +9,7 @@ import { fileBrowser, general, structureShip } from '../state/store.js';
 import { updateVisualization } from '../core/crystal-viewer.js';
 import { setActivePipelineFromController } from './ColorPanel.js';
 import { updateSpins, updatePolyhedra, autoSpinScale } from '../render/index.js';
-import { recenterCamera } from './WindowAndSceneControls.js';
+import { recenterCamera, setGizmoLabelsOnArrows, resizeGizmoRenderer } from './WindowAndSceneControls.js';
 import { selectStructure, createRow } from './FileBrowswerPanel.js';
 import { showTrajectoryFrame } from './TrajectoryPanel.js';
 import { toggleCompositionLegend, isCompositionLegendOpen } from './CompositionLegendWidget.js';
@@ -78,6 +78,20 @@ export function initWidgetMode(opts) {
   // Polyhedra default OFF in the embed regardless of the payload's display flag.
   general.showPolyhedra = false;
   updatePolyhedra();
+  // Axes gizmo: always on, with the a/b/c letters integrated onto the arrows
+  // instead of the separate #axesLegend box (see docs/styles/widgetMode.css
+  // for the lower-left pin). A restored payload's showAxes=false (ShareModule)
+  // would otherwise leave #axesGizmo's inline display from an earlier
+  // ControlsWiring toggle at 'none', which the widget CSS can't out-specificity
+  // since it never sets `display` for the gizmo — so clear it explicitly.
+  general.showAxes = true;
+  const gizmoDiv = document.getElementById('axesGizmo');
+  if (gizmoDiv) gizmoDiv.style.display = '';
+  setGizmoLabelsOnArrows(true);
+  // Re-fit the renderer/camera to the div's actual box: a no-op on the common
+  // boot path (initAxesGizmo already sized it correctly first paint), but
+  // covers the display:'' clear above, which can change the box from 0x0.
+  resizeGizmoRenderer();
 
   setupFramesMode();
   buildSettings(opts?.href ?? '');

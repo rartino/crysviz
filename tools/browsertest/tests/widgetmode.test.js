@@ -143,17 +143,53 @@ function fixtureJson() {
   });
   H.check('locked legend labels are not editable', editable.count > 0 && editable.anyEditable === false, JSON.stringify(editable));
 
-  // Item 5: widget legend opens toward the lower-left of the view.
+  // Item 5: widget legend opens toward the lower-right of the view (the axes
+  // gizmo below takes the lower-left).
   const pos = await page.evaluate(() => {
     const w = document.querySelector('.comp-legend-widget');
     const r = w.getBoundingClientRect();
     const view = document.getElementById('view').getBoundingClientRect();
     return {
-      inLeftHalf: (r.left + r.width / 2) < view.left + view.width / 2,
-      inLowerHalf: (r.top + r.height / 2) > view.top + view.height / 2,
+      inRightHalf: (r.left + r.width / 2) > view.left + view.width / 2,
+      rightEdgeGap: view.right - r.right,
+      bottomEdgeGap: view.bottom - r.bottom,
     };
   });
-  H.check('widget legend is anchored lower-left of the view', pos.inLeftHalf && pos.inLowerHalf, JSON.stringify(pos));
+  H.check('widget legend is anchored lower-right of the view (right/bottom edges within 40px)',
+    pos.inRightHalf && Math.abs(pos.rightEdgeGap) < 40 && Math.abs(pos.bottomEdgeGap) < 40,
+    JSON.stringify(pos));
+
+  // --- Axes gizmo: shown lower-left, integrated arrow labels, no legend box --
+  const gizmo = await page.evaluate(async () => {
+    const { general, app } = await import('./state/store.js');
+    const g = document.getElementById('axesGizmo');
+    const legend = document.getElementById('axesLegend');
+    const gr = g.getBoundingClientRect();
+    const view = document.getElementById('view').getBoundingClientRect();
+    const legendVisible = !!legend && legend.offsetParent !== null
+      && getComputedStyle(legend).display !== 'none';
+    const scene = app.gizmoScene;
+    return {
+      gizmoVisible: g.offsetParent !== null && getComputedStyle(g).display !== 'none',
+      leftEdgeGap: gr.left - view.left,
+      bottomEdgeGap: view.bottom - gr.bottom,
+      pointerEvents: getComputedStyle(g).pointerEvents,
+      labelsOnArrows: general.gizmoLabelsOnArrows,
+      aVisible: !!scene?.userData?.aLabel?.visible,
+      bVisible: !!scene?.userData?.bLabel?.visible,
+      cVisible: !!scene?.userData?.cLabel?.visible,
+      legendVisible,
+    };
+  });
+  H.check('axes gizmo is visible, anchored lower-left of the view (left/bottom edges within 40px)',
+    gizmo.gizmoVisible && Math.abs(gizmo.leftEdgeGap) < 40 && Math.abs(gizmo.bottomEdgeGap) < 40,
+    JSON.stringify(gizmo));
+  H.check('axes gizmo is purely decorative (pointer-events: none)',
+    gizmo.pointerEvents === 'none', JSON.stringify(gizmo));
+  H.check('gizmo labels are integrated onto the arrows (a/b/c sprites visible)',
+    gizmo.labelsOnArrows === true && gizmo.aVisible && gizmo.bVisible && gizmo.cVisible,
+    JSON.stringify(gizmo));
+  H.check('the separate #axesLegend box is not shown', gizmo.legendVisible === false, JSON.stringify(gizmo));
 
   // --- Logo IS the menu trigger; no cog ------------------------------------
   const menu = await page.evaluate(() => {
