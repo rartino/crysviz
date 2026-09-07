@@ -1074,13 +1074,33 @@ function addPlaneFromCurrentInputs() {
   addPlane(structure, createDefaultPlane());
 }
 
-/** Same label text updateSelectedPlaneFromInputs() writes for edited planes. */
+/**
+ * A plane's geometry: either Miller indices (h k l) or a Cartesian normal plus
+ * offset (u v w | d), tagged by `type`. Every member is optional so the two
+ * shapes share one loose type — the codebase switches on `type` everywhere.
+ *
+ * @typedef {{type: string, h?: number, k?: number, l?: number,
+ *            u?: number, v?: number, w?: number, d?: number}} PlaneParams
+ */
+
+/**
+ * Same label text updateSelectedPlaneFromInputs() writes for edited planes.
+ * @param {PlaneParams} [params]
+ * @returns {string}
+ */
 function planeLabelForParams(params) {
   if (params?.type === 'hkl') return `(${params.h} ${params.k} ${params.l})`;
-  const { u = 0, v = 0, w = 0, d = 0 } = params || {};
+  const u = params?.u ?? 0;
+  const v = params?.v ?? 0;
+  const w = params?.w ?? 0;
+  const d = params?.d ?? 0;
   return `[${u.toFixed(2)} ${v.toFixed(2)} ${w.toFixed(2)}] d=${d.toFixed(2)}`;
 }
 
+/**
+ * @param {PlaneParams} [params]
+ * @param {string} [label]
+ */
 function createDefaultPlane(params = { type: 'hkl', h: 1, k: 1, l: 1 }, label = '(1 1 1)') {
   return {
     enabled:       true,
@@ -1109,6 +1129,7 @@ function addPlane(structure, plane) {
 /**
  * Fit the current atom selection to a plane and return its uvwd parameters,
  * or null (having told the user why) if the selection can't define one.
+ * @returns {PlaneParams|null}
  */
 function planeParamsFromSelectedAtoms() {
   const atoms = getSelectedAtoms();
