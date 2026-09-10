@@ -1,7 +1,7 @@
 import { fileBrowser } from '../state/store.js';
 import {
-  applyFocusRegions, createFocusRegion, getFocusRegions, prepareFocusRegions,
-  removeFocusRegion, resetFocusRegionCenter, setFocusRegionCenterFractional,
+  applyFocusRegions, createFocusRegion, effectiveGradientRadius, getFocusRegions,
+  prepareFocusRegions, removeFocusRegion, resetFocusRegionCenter, setFocusRegionCenterFractional,
 } from '../render/index.js';
 import {
   getSelectedAtoms, selectAtomsByInstances, subscribeToAtomSelection,
@@ -179,7 +179,66 @@ function renderRegionCard(region, index, rerender) {
   });
   exceptions.append(exceptionText, addExceptions, clearExceptions);
   card.appendChild(exceptions);
+  card.appendChild(gradientEditor(region, rerender));
+  card.appendChild(polyhedraModeEditor(region));
   return card;
+}
+
+/** Radial gradient: a linear opacity ramp from the inner region (or the
+ * center, when the inner region is off) out to the gradient radius. */
+function gradientEditor(region, rerender) {
+  const wrap = document.createElement('div');
+  wrap.className = 'focus-regions-gradient';
+  const toggle = createToggleRow({
+    id: `focusGradient-${region.id}`,
+    label: 'Radial gradient',
+    checked: region.gradientEnabled === true,
+    small: true,
+    rowClass: 'toggle_row focus-regions-inner-toggle',
+    textClass: 'toggle_text focus-regions-inner-toggle-text',
+    onChange(on) { region.gradientEnabled = on; rerender(); applyFocusRegions(); },
+  });
+  wrap.appendChild(toggle.row);
+  if (region.gradientEnabled === true) {
+    const hint = document.createElement('span');
+    hint.className = 'focus-regions-summary';
+    const refreshHint = () => {
+      const from = region.innerEnabled !== false ? 'the inner radius' : 'the center';
+      hint.textContent = `Opacity ramps linearly from ${from} to ${effectiveGradientRadius(region).toFixed(1)} Å.`;
+    };
+    refreshHint();
+    wrap.appendChild(rangeRow('Gradient radius', region.gradientRadius, 0, 30, 0.1, (value) => {
+      region.gradientRadius = value;
+      refreshHint();
+      applyFocusRegions();
+    }));
+    wrap.appendChild(hint);
+  }
+  return wrap;
+}
+
+/** Polyhedra follow the region either by the mean of their atoms' focus
+ * opacity or by the region rule evaluated at the polyhedron centroid. */
+function polyhedraModeEditor(region) {
+  const row = document.createElement('label');
+  row.className = 'focus-regions-polyhedra';
+  const text = document.createElement('span');
+  text.textContent = 'Polyhedra opacity';
+  const select = document.createElement('select');
+  select.setAttribute('aria-label', 'Polyhedra focus opacity rule');
+  for (const [value, label] of [['average', 'Average of atoms'], ['position', 'Rule at centroid']]) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    select.appendChild(option);
+  }
+  select.value = region.polyhedraMode === 'position' ? 'position' : 'average';
+  select.addEventListener('change', () => {
+    region.polyhedraMode = select.value;
+    applyFocusRegions();
+  });
+  row.append(text, select);
+  return row;
 }
 
 export function addFocusRegionsPanel(containerId) {

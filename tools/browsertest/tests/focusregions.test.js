@@ -5,6 +5,9 @@
 // - overlapping regions preserve anything important to either region;
 // - centers/exceptions remain visible;
 // - focus alpha composes with, and never overwrites, authored atom alpha;
+// - the radial gradient ramps linearly between the inner and outer values;
+// - polyhedra follow either their atoms' mean or the rule at their centroid;
+// - the volumetric field fades per vertex under the Field panel's opacity;
 // - the real defect CONTCAR can create and edit more than one region.
 'use strict';
 const fs = require('fs');
@@ -15,13 +18,27 @@ const H = require('../harness');
   const { browser, page, errors } = await H.launchApp();
 
   const math = await page.evaluate(async () => {
-    const { focusOpacityAt, combinedFocusOpacity } = await import('./render/FocusRegionModule.js');
+    const { focusOpacityAt, combinedFocusOpacity, focusOpacityForPolyhedron } =
+      await import('./render/FocusRegionModule.js');
     const region = {
       enabled: true, center: [0, 0, 0], centerSourceIndices: [7], excludedSourceIndices: [9],
       innerEnabled: true, innerRadius: 2, innerOpacity: 0.8, outerOpacity: 0.2,
     };
     const second = { ...region, center: [10, 0, 0], centerSourceIndices: [] };
+    const gradient = { ...region, gradientEnabled: true, gradientRadius: 6 };
+    const poly = { vertices: [[1, 0, 0], [3, 0, 0]], vertexSrcList: [1, 2], centerIndex: null };
     return {
+      gradientInside: focusOpacityAt([1, 0, 0], gradient, 1),
+      gradientMid: focusOpacityAt([4, 0, 0], gradient, 1),
+      gradientEdge: focusOpacityAt([6, 0, 0], gradient, 1),
+      gradientBeyond: focusOpacityAt([30, 0, 0], gradient, 1),
+      gradientNoInner: focusOpacityAt([3, 0, 0], { ...gradient, innerEnabled: false }, 1),
+      gradientClamped: focusOpacityAt([3, 0, 0], { ...gradient, gradientRadius: 1 }, 1),
+      gradientCenter: focusOpacityAt([4, 0, 0], gradient, 7),
+      polyAverage: focusOpacityForPolyhedron(poly, [region]),
+      polyPosition: focusOpacityForPolyhedron(poly, [{ ...region, polyhedraMode: 'position' }]),
+      polyFocusCenter: focusOpacityForPolyhedron({ ...poly, centerIndex: 7 }, [region]),
+      polyNoRegions: focusOpacityForPolyhedron(poly, []),
       inner: focusOpacityAt([1, 0, 0], region, 1),
       outerNear: focusOpacityAt([3, 0, 0], region, 1),
       outerFar: focusOpacityAt([60, 0, 0], region, 1),
@@ -41,6 +58,18 @@ const H = require('../harness');
     math.earlierFocus === 1, JSON.stringify(math));
   H.check('disabling the inner region applies the outer rule near a molecule',
     math.noInner === 0.2, JSON.stringify(math));
+  const near = (a, b) => Math.abs(a - b) < 1e-9;
+  H.check('the radial gradient ramps linearly from the inner radius to the gradient radius',
+    near(math.gradientInside, 0.8) && near(math.gradientMid, 0.5) && near(math.gradientEdge, 0.2)
+      && near(math.gradientBeyond, 0.2), JSON.stringify(math));
+  H.check('without an inner region the gradient starts fully visible at the center',
+    near(math.gradientNoInner, 0.6), JSON.stringify(math));
+  H.check('a gradient radius inside the inner sphere degrades to the hard edge',
+    near(math.gradientClamped, 0.2), JSON.stringify(math));
+  H.check('focus atoms stay exempt from the gradient', math.gradientCenter === 1, JSON.stringify(math));
+  H.check('polyhedra average their atoms or take the rule at their centroid',
+    near(math.polyAverage, 0.5) && near(math.polyPosition, 0.8) && math.polyFocusCenter === 1
+      && math.polyNoRegions === 1, JSON.stringify(math));
 
   const contcar = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'tests', 'wav_dat', 'CONTCAR'), 'utf8');
   await page.evaluate(async (source) => {
@@ -75,10 +104,12 @@ const H = require('../harness');
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const attr = groups.atomsMesh.geometry.attributes.instanceOpacity;
     const centerSources = new Set([...first.centerSourceIndices, ...second.centerSourceIndices]);
+    // Beyond the inner sphere AND the default-on gradient shell of both regions.
+    const reach = (region) => Math.max(region.innerRadius, region.gradientRadius);
     const farIndex = wrapped.cart.findIndex((p, index) => index > 1
       && !centerSources.has(wrapped.srcIndex[index])
-      && Math.hypot(p[0] - first.center[0], p[1] - first.center[1], p[2] - first.center[2]) > first.innerRadius
-      && Math.hypot(p[0] - second.center[0], p[1] - second.center[1], p[2] - second.center[2]) > second.innerRadius);
+      && Math.hypot(p[0] - first.center[0], p[1] - first.center[1], p[2] - first.center[2]) > reach(first)
+      && Math.hypot(p[0] - second.center[0], p[1] - second.center[1], p[2] - second.center[2]) > reach(second));
     const { Force, Spin } = await import('./model/index.js');
     const { updateForces, updateSpins } = await import('./render/index.js');
     structure.forces = structure.atoms.map(() => new Force({ vector: [1, 0, 0] }));
@@ -98,6 +129,7 @@ const H = require('../harness');
     return {
       atomCount: structure.atoms.length,
       regionCount: structure.focusRegions.length,
+      gradientDefault: structure.focusRegions.every((region) => region.gradientEnabled === true),
       cards: document.querySelectorAll('#cvPanelBody-focusRegions .focus-regions-card').length,
       innerToggles: document.querySelectorAll('#cvPanelBody-focusRegions [id^="focusInner-"]').length,
       labels: [...document.querySelectorAll('#cvPanelBody-focusRegions .focus-regions-range-heading > span:first-child')]
@@ -121,9 +153,12 @@ const H = require('../harness');
     result.atomCount > 100, JSON.stringify(result));
   H.check('multiple regions have independent cards and inner-region controls',
     result.regionCount === 2 && result.cards === 2 && result.innerToggles === 2, JSON.stringify(result));
-  H.check('the panel exposes only inner radius, inner opacity, and outer opacity',
+  H.check('new regions default to the radial gradient',
+    result.gradientDefault === true, JSON.stringify(result));
+  H.check('the panel exposes inner radius, inner opacity, outer opacity, and gradient radius',
     result.labels.includes('Inner radius') && result.labels.includes('Inner opacity')
-      && result.labels.includes('Outer opacity') && !result.labels.includes('Outer radius')
+      && result.labels.includes('Outer opacity') && result.labels.includes('Gradient radius')
+      && !result.labels.includes('Outer radius')
       && !result.labels.includes('Beyond opacity'), JSON.stringify(result.labels));
   H.check('the active inner region exposes editable fractional center coordinates',
     result.centerInputs === 3
@@ -138,6 +173,124 @@ const H = require('../harness');
   H.check('force and spin arrows follow their atom focus opacity',
     result.forceArrowOpacity <= 0.1001 && result.spinArrowOpacity <= 0.1001,
     JSON.stringify(result));
+
+  // Every card ends with the gradient toggle (on by default) and the polyhedra
+  // rule; switching the gradient off gives the hard edge, and switching it back
+  // on reveals its radius slider and changes what is drawn.
+  const gradientUi = await page.evaluate(async (farIndex) => {
+    const { fileBrowser, groups } = await import('./state/store.js');
+    const structure = fileBrowser.selectedStructure;
+    const region = structure.focusRegions[0];
+    region.innerRadius = 0.1;
+    region.gradientRadius = 60; // wide enough to reach the far atom
+    const frame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const toggle = () => document.querySelector('#cvPanelBody-focusRegions [id^="focusGradient-"]');
+    toggle().click(); // off: hard edge
+    await frame();
+    const before = groups.atomsMesh.geometry.attributes.instanceOpacity.getX(farIndex);
+    toggle().click(); // on again: gradient reaches the far atom
+    await frame();
+    const after = groups.atomsMesh.geometry.attributes.instanceOpacity.getX(farIndex);
+    return {
+      toggles: document.querySelectorAll('#cvPanelBody-focusRegions [id^="focusGradient-"]').length,
+      selects: document.querySelectorAll('#cvPanelBody-focusRegions .focus-regions-polyhedra select').length,
+      options: [...document.querySelectorAll('#cvPanelBody-focusRegions .focus-regions-polyhedra select')[0].options]
+        .map((option) => option.value),
+      enabled: region.gradientEnabled,
+      labels: [...document.querySelectorAll('#cvPanelBody-focusRegions .focus-regions-range-heading > span:first-child')]
+        .map((label) => label.textContent),
+      before, after,
+    };
+  }, result.farIndex);
+  H.check('every region card ends with a gradient toggle and a polyhedra rule',
+    gradientUi.toggles === 2 && gradientUi.selects === 2
+      && gradientUi.options.join(',') === 'average,position', JSON.stringify(gradientUi));
+  H.check('the gradient toggle reveals its radius and lifts a far atom above the outer value',
+    gradientUi.enabled === true && gradientUi.labels.includes('Gradient radius')
+      && gradientUi.before <= 0.1001 && gradientUi.after > gradientUi.before + 0.05,
+    JSON.stringify(gradientUi));
+
+  // Polyhedra: whichever coordination polyhedra the defect cell yields, those
+  // away from both focus atoms must be scaled by the outer value, and the
+  // authored style alpha must survive on the mesh (never overwritten).
+  const polyhedra = await page.evaluate(async () => {
+    const { fileBrowser, groups, general } = await import('./state/store.js');
+    const { updatePolyhedra } = await import('./render/index.js');
+    const { applyFocusRegions } = await import('./render/FocusRegionModule.js');
+    const structure = fileBrowser.selectedStructure;
+    structure.focusRegions[0].gradientEnabled = false;
+    structure.focusRegions[0].innerRadius = 0.1;
+    general.showPolyhedra = true;
+    await updatePolyhedra();
+    applyFocusRegions();
+    const meshes = (groups.polyhedraGroup?.children ?? []).filter((m) => m.userData?.type === 'polyhedron');
+    const dimmed = meshes.filter((m) => m.material.opacity <= m.userData.baseOpacity * 0.1001);
+    const authored = meshes.every((m) => m.userData.baseOpacity > 0.1001);
+    const edgeDimmed = meshes.every((m) => {
+      const edge = m.children.find((c) => c.userData?.type === 'polyhedron-edges');
+      return !edge || edge.material.opacity <= m.userData.baseEdgeOpacity + 1e-6;
+    });
+    general.showPolyhedra = false;
+    await updatePolyhedra();
+    return { count: meshes.length, dimmed: dimmed.length, authored, edgeDimmed };
+  });
+  H.check('polyhedra away from every focus scale by the outer value and keep their authored alpha',
+    polyhedra.count === 0 || (polyhedra.dimmed > 0 && polyhedra.authored && polyhedra.edgeDimmed),
+    JSON.stringify(polyhedra));
+
+  // The volumetric field: a synthetic blob over the cell. Its material keeps
+  // the Field panel opacity; the focus factor lives in a vertex alpha.
+  const field = await page.evaluate(async () => {
+    const { Field, FieldContainer, getIsosurfaceMaterialSettings } = await import('./model/index.js');
+    const { fileBrowser, groups } = await import('./state/store.js');
+    const { fieldBrowser } = await import('./ui/FieldPanel.js');
+    const { setActiveField, updateField } = await import('./render/index.js');
+    const structure = fileBrowser.selectedStructure;
+    for (const region of structure.focusRegions) region.gradientEnabled = false;
+    const lat = structure.lattice;
+    const nx = 16, ny = 16, nz = 16;
+    const values = new Float32Array(nx * ny * nz);
+    const cx = (nx - 1) / 2, cy = (ny - 1) / 2, cz = (nz - 1) / 2, sigma = 3.5;
+    let maxV = 0;
+    for (let k = 0; k < nz; k++)
+      for (let j = 0; j < ny; j++)
+        for (let i = 0; i < nx; i++) {
+          const v = Math.exp(-((i - cx) ** 2 + (j - cy) ** 2 + (k - cz) ** 2) / (2 * sigma * sigma));
+          values[i + nx * (j + ny * k)] = v;
+          if (v > maxV) maxV = v;
+        }
+    const voxel = [0, 1, 2].map((axis) => [lat[axis][0] / [nx, ny, nz][axis],
+      lat[axis][1] / [nx, ny, nz][axis], lat[axis][2] / [nx, ny, nz][axis]]);
+    const blob = new Field({
+      nx, ny, nz, origin: [0, 0, 0], voxel, values, label: 'FocusBlob',
+      isoValue: 0.5, minValue: 0, maxValue: maxV, absMinValue: 0, absMaxValue: maxV,
+      useAbsoluteIsoValue: false, isVisible: true,
+    });
+    structure.volumetricFields = new FieldContainer({ fileName: 'focus.cube', source: 'Cube', fields: [blob] });
+    fieldBrowser.selectedField = null;
+    fieldBrowser.setAvailableFields([blob]);
+    fieldBrowser.setSelectedField(0);
+    setActiveField(blob, false);
+    updateField(0.5);
+    const mesh = groups.isosurfaceGroup.meshes.positive;
+    const color = mesh.geometry.getAttribute('color');
+    const alphas = [];
+    for (let i = 0; color && i < color.count; i++) alphas.push(color.array[i * 4 + 3]);
+    return {
+      vertices: mesh.geometry.getAttribute('position')?.count ?? 0,
+      itemSize: color?.itemSize ?? 0,
+      vertexColors: mesh.material.vertexColors,
+      transparent: mesh.material.transparent,
+      materialOpacity: mesh.material.opacity,
+      panelOpacity: getIsosurfaceMaterialSettings().opacity,
+      minAlpha: alphas.length ? Math.min(...alphas) : null,
+      maxAlpha: alphas.length ? Math.max(...alphas) : null,
+    };
+  });
+  H.check('the field fades per vertex while its material keeps the Field panel opacity',
+    field.vertices > 0 && field.itemSize === 4 && field.vertexColors === true && field.transparent
+      && field.minAlpha <= 0.1001 && field.maxAlpha <= 1
+      && Math.abs(field.materialOpacity - field.panelOpacity) < 1e-6, JSON.stringify(field));
 
   const regionSelection = await page.evaluate(async () => {
     const { fileBrowser } = await import('./state/store.js');
@@ -173,16 +326,25 @@ const H = require('../harness');
     clearFocusRegions();
     const source = fileBrowser.selectedStructure.periodic.visibleWrapped.srcIndex[farIndex];
     const authored = fileBrowser.selectedStructure.atoms[source].getOpacity();
+    const fieldMesh = groups.isosurfaceGroup?.meshes?.positive;
     return {
       savedRegions: captured.display.focusRegions?.length,
+      savedGradient: captured.display.focusRegions?.[0]?.gradientEnabled,
+      savedMode: captured.display.focusRegions?.[0]?.polyhedraMode,
       restoredDisplay: groups.atomsMesh.geometry.attributes.instanceOpacity.getX(farIndex),
       authored,
+      fieldVertexColors: fieldMesh?.material.vertexColors,
+      fieldHasAlpha: !!fieldMesh?.geometry.getAttribute('color'),
     };
   }, result.farIndex);
-  H.check('shared views retain focus-region definitions', reversible.savedRegions === 2,
-    JSON.stringify(reversible));
+  H.check('shared views retain focus-region definitions including the new settings',
+    reversible.savedRegions === 2 && typeof reversible.savedGradient === 'boolean'
+      && reversible.savedMode === 'average', JSON.stringify(reversible));
   H.check('clearing every region restores the atom’s authored appearance',
     Math.abs(reversible.restoredDisplay - reversible.authored) < 1e-5, JSON.stringify(reversible));
+  H.check('clearing every region restores the field material and drops the vertex alpha',
+    reversible.fieldVertexColors === false && reversible.fieldHasAlpha === false,
+    JSON.stringify(reversible));
 
   H.check('no page errors', errors.length === 0, errors.join(' | '));
   await H.finish(browser);

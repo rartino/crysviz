@@ -10,6 +10,7 @@ import { app, groups } from '../state/store.js';
 import { readCHGCAR } from "../io/ReadChgcarModule.js";
 import { readCubeFile } from "../io/ReadCubeModule.js";
 import { Isosurface } from "../model/index.js";
+import { applyFocusToField } from './FocusRegionModule.js';
 
 
 
@@ -206,6 +207,8 @@ export function updateField(iso = null) {
   //  Add to scene if not already there
   //--------------------------------------------------------
   app.scene.add(groups.isosurfaceGroup);
+  // Fresh geometry: re-derive the per-vertex focus-region alpha for it.
+  applyFocusToField();
 }
 
 export function parseCubeFile(content, fileName) {

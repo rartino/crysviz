@@ -2,11 +2,15 @@
 // not mutate Atom.opacity: closing the panel or disabling every region must
 // restore the authored appearance exactly.
 
+import * as THREE from '../external/three/three.module.js';
 import { fileBrowser, groups, general } from '../state/store.js';
 import { cartToFrac, fracToCart } from '../math/index.js';
 import { applyTransparency } from '../utils/TransparencyPolicy.js';
 import { requestRender } from './AnimateModule.js';
 import { syncArrowTransparency } from './ArrowMaterial.js';
+import { applyFocusToPolyhedra } from './PolyhedraModule.js';
+import { applyFocusToChargeBadges } from './ChargeBadgeModule.js';
+import { applyFocusToHydrogenBonds } from './HydrogenBondModule.js';
 
 export const DEFAULT_FOCUS_REGION = Object.freeze({
   enabled: true,
@@ -14,9 +18,19 @@ export const DEFAULT_FOCUS_REGION = Object.freeze({
   innerRadius: 3.5,
   innerOpacity: 1,
   outerOpacity: 0.15,
+  // Radial gradient (the default): opacity falls linearly from the inner value
+  // at the inner radius to the outer value at gradientRadius (Cartesian Å from
+  // the center). Off = the hard inner/outer edge.
+  gradientEnabled: true,
+  gradientRadius: 7,
+  // How a polyhedron follows the rule: 'average' of its atoms' focus opacity,
+  // or the region rule evaluated at its own 'position' (centroid).
+  polyhedraMode: 'average',
   excludedSourceIndices: [],
   centerOffsetFrac: [0, 0, 0],
 });
+
+export const POLYHEDRA_FOCUS_MODES = Object.freeze(['average', 'position']);
 
 function clamp01(value) {
   const n = Number(value);
@@ -32,9 +46,26 @@ export function focusOpacityAt(point, region, sourceIndex = -1) {
   const dy = point[1] - region.center[1];
   const dz = point[2] - region.center[2];
   const distance = Math.hypot(dx, dy, dz);
-  const innerRadius = Math.max(0, Number(region.innerRadius) || 0);
-  if (region.innerEnabled && distance <= innerRadius) return clamp01(region.innerOpacity);
-  return clamp01(region.outerOpacity);
+  // Without an inner region the focus atoms themselves are the object of
+  // interest: the gradient then falls from full visibility at the center.
+  const innerRadius = region.innerEnabled ? Math.max(0, Number(region.innerRadius) || 0) : 0;
+  const innerOpacity = region.innerEnabled ? clamp01(region.innerOpacity) : 1;
+  const outerOpacity = clamp01(region.outerOpacity);
+  if (region.innerEnabled && distance <= innerRadius) return innerOpacity;
+  if (region.gradientEnabled) {
+    const gradientRadius = effectiveGradientRadius(region);
+    if (distance < gradientRadius) {
+      const t = (distance - innerRadius) / (gradientRadius - innerRadius);
+      return innerOpacity + (outerOpacity - innerOpacity) * Math.max(0, Math.min(1, t));
+    }
+  }
+  return outerOpacity;
+}
+
+/** Outer edge of the gradient shell; never inside the inner sphere. */
+export function effectiveGradientRadius(region) {
+  const innerRadius = region?.innerEnabled ? Math.max(0, Number(region.innerRadius) || 0) : 0;
+  return Math.max(innerRadius, Number(region?.gradientRadius) || 0);
 }
 
 /** Multiple regions combine by maximum visibility: importance in one region
@@ -62,8 +93,21 @@ export function getFocusRegions(structure = fileBrowser.selectedStructure) {
       delete region.beyondOpacity;
       delete region.outerRadius;
     }
+    // Regions saved before the gradient / polyhedra settings existed keep the
+    // hard edge they were authored with; only new regions default to a gradient.
+    if (typeof region.gradientEnabled !== 'boolean') region.gradientEnabled = false;
+    if (!Number.isFinite(Number(region.gradientRadius))) {
+      region.gradientRadius = Math.max(DEFAULT_FOCUS_REGION.gradientRadius,
+        (Number(region.innerRadius) || 0) + 3);
+    }
+    if (!POLYHEDRA_FOCUS_MODES.includes(region.polyhedraMode)) region.polyhedraMode = 'average';
   }
   return regions;
+}
+
+/** True when at least one region can change what is drawn. */
+export function focusRegionsActive(structure = fileBrowser.selectedStructure) {
+  return getFocusRegions(structure).some((region) => region?.enabled !== false && region.center?.length);
 }
 
 /** Keep centers attached to their chosen periodic atom copies as coordinates
@@ -114,6 +158,43 @@ export function getFocusOpacityForInstance(instanceIndex, structure = fileBrowse
   if (!point) return 1;
   return combinedFocusOpacity(point, wrapped.srcIndex?.[instanceIndex] ?? instanceIndex,
     getFocusRegions(structure));
+}
+
+/** Focus opacity of one polyhedron (model/Polyhedron: Cartesian `vertices`,
+ * `vertexSrcList`, optional `centerIndex`). Each region proposes a value by
+ * its own polyhedraMode — the mean of its atoms' focus opacity, or the rule at
+ * the polyhedron centroid — and regions combine by maximum, as for atoms. */
+export function focusOpacityForPolyhedron(poly, regions) {
+  const enabled = (regions ?? []).filter((region) => region?.enabled && region.center?.length);
+  const vertices = poly?.vertices ?? [];
+  if (!enabled.length || !vertices.length) return 1;
+  const centroid = [0, 1, 2].map((axis) =>
+    vertices.reduce((sum, vertex) => sum + Number(vertex[axis]), 0) / vertices.length);
+  const centerSource = Number.isInteger(poly.centerIndex) ? poly.centerIndex : -1;
+  const atoms = vertices.map((vertex, index) => ({
+    point: vertex, source: poly.vertexSrcList?.[index] ?? -1,
+  }));
+  if (centerSource >= 0) atoms.push({ point: centroid, source: centerSource });
+  // Focus atoms and exceptions are global (see combinedFocusOpacity).
+  const isException = (source) => source >= 0 && enabled.some((region) =>
+    region.centerSourceIndices?.includes(source) || region.excludedSourceIndices?.includes(source));
+  if (isException(centerSource)) return 1;
+  let opacity = 0;
+  for (const region of enabled) {
+    let proposal;
+    if (region.polyhedraMode === 'position') {
+      proposal = focusOpacityAt(centroid, region, centerSource);
+    } else {
+      proposal = atoms.reduce((sum, atom) => sum
+        + (isException(atom.source) ? 1 : focusOpacityAt(atom.point, region, atom.source)), 0) / atoms.length;
+    }
+    opacity = Math.max(opacity, proposal);
+  }
+  return clamp01(opacity);
+}
+
+export function getFocusOpacityForPolyhedron(poly, structure = fileBrowser.selectedStructure) {
+  return focusOpacityForPolyhedron(poly, getFocusRegions(structure));
 }
 
 export function createFocusRegion(centerAtoms, structure = fileBrowser.selectedStructure) {
@@ -201,7 +282,74 @@ export function applyFocusRegions(structure = fileBrowser.selectedStructure) {
   }
   applyFocusToArrows(structure, 'forces');
   applyFocusToArrows(structure, 'spins');
+  applyFocusToPolyhedra(structure);
+  applyFocusToField(structure);
+  applyFocusToChargeBadges(structure);
+  applyFocusToHydrogenBonds(structure);
   requestRender();
+}
+
+const _fieldPoint = [0, 0, 0];
+
+/** The volumetric field follows the region rule per vertex. The material keeps
+ * the Field panel's opacity as the maximum; the focus factor is written to a
+ * four-component vertex `color` attribute (three.js USE_COLOR_ALPHA), so the
+ * isosurface fades exactly where the atoms around it do. Without active
+ * regions the attribute is removed and the material is restored. */
+export function applyFocusToField(structure = fileBrowser.selectedStructure) {
+  const iso = groups.isosurfaceGroup;
+  const meshes = iso?.meshes;
+  if (!meshes) return;
+  const regions = getFocusRegions(structure).filter((region) =>
+    region?.enabled && region.center?.length);
+  iso.updateMatrixWorld?.(true);
+  for (const mesh of [meshes.positive, meshes.negative]) {
+    const geometry = mesh?.geometry;
+    const material = mesh?.material;
+    if (!geometry || !material) continue;
+    const position = geometry.getAttribute('position');
+    if (!regions.length || !position?.count) {
+      if (geometry.getAttribute('color')) geometry.deleteAttribute('color');
+      if (material.vertexColors) {
+        material.vertexColors = false;
+        material.needsUpdate = true;
+      }
+      applyTransparency(material, { kind: 'isosurface', opacity: material.opacity, mesh });
+      continue;
+    }
+    let color = geometry.getAttribute('color');
+    if (!color || color.itemSize !== 4 || color.count !== position.count) {
+      color = new THREE.BufferAttribute(new Float32Array(position.count * 4), 4);
+      geometry.setAttribute('color', color);
+    }
+    const m = mesh.matrixWorld.elements;
+    const src = position.array;
+    const dst = /** @type {Float32Array} */ (color.array);
+    let minAlpha = 1;
+    for (let i = 0; i < position.count; i++) {
+      const x = src[i * 3];
+      const y = src[i * 3 + 1];
+      const z = src[i * 3 + 2];
+      _fieldPoint[0] = m[0] * x + m[4] * y + m[8] * z + m[12];
+      _fieldPoint[1] = m[1] * x + m[5] * y + m[9] * z + m[13];
+      _fieldPoint[2] = m[2] * x + m[6] * y + m[10] * z + m[14];
+      let alpha = 0;
+      for (const region of regions) alpha = Math.max(alpha, focusOpacityAt(_fieldPoint, region, -1));
+      dst[i * 4] = 1;
+      dst[i * 4 + 1] = 1;
+      dst[i * 4 + 2] = 1;
+      dst[i * 4 + 3] = alpha;
+      if (alpha < minAlpha) minAlpha = alpha;
+    }
+    color.needsUpdate = true;
+    if (!material.vertexColors) {
+      material.vertexColors = true;
+      material.needsUpdate = true;
+    }
+    applyTransparency(material, {
+      kind: 'isosurface', opacity: material.opacity, needsTransparency: minAlpha < 0.999, mesh,
+    });
+  }
 }
 
 export function applyFocusToArrows(structure = fileBrowser.selectedStructure, kind) {

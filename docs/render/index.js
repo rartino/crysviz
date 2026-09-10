@@ -29,7 +29,7 @@ export {
 
 export {
   rebuildChargeBadges, updateChargeBadges, disposeChargeBadges, clearChargeTextureCache,
-  formatCharge, parseChargeInput,
+  formatCharge, parseChargeInput, applyFocusToChargeBadges,
 } from './ChargeBadgeModule.js';
 
 export {
@@ -51,16 +51,17 @@ export { removeForces, updateForces, computeForceColor } from './ForceModule.js'
 export {
   updateHydrogenBonds, clearHydrogenBonds, initHydrogenBondPairs,
   resetHydrogenBondLengths, getEligibleHydrogenBondPairs, hydrogenBondAcceptorOf,
-  hydrogenBondColorFor,
+  hydrogenBondColorFor, applyFocusToHydrogenBonds,
 } from './HydrogenBondModule.js';
 
 export { applyFrameFast, BOND_TOPOLOGY_STRIDE, lastFastFrameBail } from './FastFrameModule.js';
 
 export {
-  DEFAULT_FOCUS_REGION, focusOpacityAt, combinedFocusOpacity, getFocusRegions,
-  getFocusOpacityForInstance, prepareFocusRegions, createFocusRegion, removeFocusRegion,
-  clearFocusRegions, applyFocusRegions, setFocusRegionCenterFractional, resetFocusRegionCenter,
-  applyFocusToArrows,
+  DEFAULT_FOCUS_REGION, POLYHEDRA_FOCUS_MODES, focusOpacityAt, effectiveGradientRadius,
+  combinedFocusOpacity, focusOpacityForPolyhedron, getFocusOpacityForPolyhedron, getFocusRegions,
+  focusRegionsActive, getFocusOpacityForInstance, prepareFocusRegions, createFocusRegion,
+  removeFocusRegion, clearFocusRegions, applyFocusRegions, setFocusRegionCenterFractional,
+  resetFocusRegionCenter, applyFocusToArrows, applyFocusToField,
 } from './FocusRegionModule.js';
 
 export { updateGroundPlane } from './GroundPlaneModule.js';
@@ -73,7 +74,7 @@ export {
 export {
   updatePolyhedra, updatePolyhedraColors, groupPolyhedraByCategory,
   resolvePolyhedronStyle, polyhedronGroupKey, setPolyEdgeWidth, notifyColorsChanged,
-  polyhedronFaceColor,
+  polyhedronFaceColor, applyFocusToPolyhedra,
 } from './PolyhedraModule.js';
 
 export {

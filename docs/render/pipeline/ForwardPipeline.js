@@ -111,7 +111,9 @@ export class ForwardPipeline {
         material.transparent = true;
         break;
       case 'isosurface':
-        material.transparent = opacity < 1;
+        // needsTransparency: focus regions fade vertices below the uniform
+        // material opacity via a vertex alpha (FocusRegionModule.applyFocusToField).
+        material.transparent = opacity < 1 || !!spec.needsTransparency;
         material.depthWrite = false;
         // Render after opaque structures to reduce blending artifacts.
         if (spec.mesh) spec.mesh.renderOrder = 1;
