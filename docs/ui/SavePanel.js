@@ -7,6 +7,7 @@ import { showQEInputModal } from './QEInputModal.js';
 import { buildCifText } from '../io/cif/cif_writer.js';
 import { prepareSymmetricCif } from './CifSymmetryExport.js';
 import { showCifExportModal } from './CifExportModal.js';
+import { structureHasFractionalOccupancy } from './DisorderWarningBanner.js';
 
 /** The selected structure plus a keep-mask that drops vacancy markers, or a
  *  thrown error when nothing is loaded / only vacancies remain. Shared by the
