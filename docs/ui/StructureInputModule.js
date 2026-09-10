@@ -1,6 +1,7 @@
 
 import { StructureContainer } from '../model/index.js';
 import { readPOSCAR } from '../io/ReadPOSCARModule.js';
+import { FileSource } from '../io/FileSource.js';
 const tableBody = document.querySelector("#objectTable tbody");
 import {fileBrowser,structureShip} from '../state/store.js';
 import {createRow,selectLastAddedRow} from './FileBrowswerPanel.js';
@@ -12,6 +13,12 @@ import {
   latticeFromCell,
   cartToFractional,
 } from '../math/index.js';
+import {
+  fetchAlexandriaStructure,
+  fetchOptimadeStructure,
+  isOptimadeStructureUrl,
+  normalizeAlexandriaId,
+} from '../io/OptimadeModule.js';
 
 export {
   transpose3x3,
@@ -49,12 +56,6 @@ export function initializeWithPOSCAR(structure, fileName) {
 //   return result;
 // }
 //
-
-
-
-
-// Direct fetch of optimade fails due to cors. Not sure what or why.
-
 
 
 
@@ -118,20 +119,18 @@ export function setupStructureInput({ onLoadStructure, setStatus }) {
 
     for (const file of files) {
       setStatus(`Loading ${file.name} (${++loadedCount}/${files.length})...`);
-      const reader = new FileReader();
-      await new Promise((resolve, reject) => {
-        reader.onload = (event) => {
-          Promise.resolve(onLoadStructure(event.target.result, file.name)).then(resolve, reject);
-        };
-        reader.onerror = (error) => reject(error);
-        // ASE .traj files are binary ULM; read them as an ArrayBuffer so the
-        // raw float64 data survives. Everything else is text.
-        if (file.name.toLowerCase().endsWith('.traj')) {
-          reader.readAsArrayBuffer(file);
-        } else {
-          reader.readAsText(file);
-        }
-      });
+      // Hand over a lazy handle rather than the file's contents.
+      //
+      // This used to be a FileReader that read the whole file up front — as text,
+      // or as an ArrayBuffer for the one binary format it knew about (.traj).
+      // That forced a decision about how to read the file before anything had
+      // decided what the file *was*, and it made a multi-GB WAVECAR impossible
+      // to open at all.
+      //
+      // loadStructure now identifies the format first (io/formats.js) and reads
+      // only what that format needs (io/formats.js `materialize`). Text formats
+      // still get the entire file as a string, so nothing changes for them.
+      await onLoadStructure(FileSource.fromFile(file), file.name);
     }
     setStatus(`${files.length} structure(s) loaded!`);
   }
@@ -165,7 +164,7 @@ export function setupStructureInput({ onLoadStructure, setStatus }) {
   pasteModal.hidden = true;
   pasteModal.innerHTML = `
     <div class="paste-modal" role="dialog" aria-modal="true" aria-label="Paste structure text">
-      <textarea id="structureText" placeholder="Paste POSCAR/CIF content, OPTIMADE URL, Materials Project mp-id, or Alexandria agm-id"></textarea>
+      <textarea id="structureText" placeholder="Paste POSCAR/CIF content, an OPTIMADE structure URL, or an Alexandria agm-id"></textarea>
       <div class="paste-modal-actions">
         <button type="button" id="loadTextButton">Load Structure</button>
         <button type="button" id="cancelTextButton">Cancel</button>
@@ -176,6 +175,32 @@ export function setupStructureInput({ onLoadStructure, setStatus }) {
   const structureText = /** @type {HTMLTextAreaElement} */ (pasteModal.querySelector('#structureText'));
   const loadTextButton = pasteModal.querySelector('#loadTextButton');
   const cancelTextButton = pasteModal.querySelector('#cancelTextButton');
+
+  const optimadeWarningDialog = document.createElement('dialog');
+  optimadeWarningDialog.id = 'optimadeWarningDialog';
+  optimadeWarningDialog.setAttribute('aria-labelledby', 'optimadeWarningTitle');
+  optimadeWarningDialog.innerHTML = `
+    <h2 id="optimadeWarningTitle">Structure could not be loaded</h2>
+    <p>The provider's CORS policy blocks browser access. Download the structure and use Upload instead.</p>
+    <button type="button" id="optimadeWarningClose">OK</button>
+  `;
+  document.body.appendChild(optimadeWarningDialog);
+  const optimadeWarningClose = optimadeWarningDialog.querySelector('#optimadeWarningClose');
+  let optimadeWarningTimer = null;
+
+  function closeOptimadeWarning() {
+    if (optimadeWarningTimer !== null) clearTimeout(optimadeWarningTimer);
+    optimadeWarningTimer = null;
+    if (optimadeWarningDialog.open) optimadeWarningDialog.close();
+  }
+
+  function showOptimadeWarning() {
+    closeOptimadeWarning();
+    optimadeWarningDialog.showModal();
+    optimadeWarningTimer = setTimeout(closeOptimadeWarning, 5000);
+  }
+
+  optimadeWarningClose?.addEventListener('click', closeOptimadeWarning);
 
   function openPasteModal() {
     pasteModal.hidden = false;
@@ -189,13 +214,32 @@ export function setupStructureInput({ onLoadStructure, setStatus }) {
   async function loadStructureFromText() {
     const raw = structureText.value.trim();
     if (!raw) {
-      setStatus('Paste POSCAR, CIF, OPTIMADE URL, Materials Project mp-id, or Alexandria agm-id before loading.');
+      setStatus('Paste POSCAR, CIF, an OPTIMADE structure URL, or an Alexandria agm-id before loading.');
       structureText.focus({ preventScroll: true });
       return;
     }
     closePasteModal();
-    await onLoadStructure(raw, 'pasted');
-    structureText.value = '';
+    try {
+      if (isOptimadeStructureUrl(raw)) {
+        setStatus('Fetching structure from OPTIMADE...');
+        const result = await fetchOptimadeStructure(raw);
+        await onLoadStructure(result.content, result.fileName);
+      } else if (normalizeAlexandriaId(raw)) {
+        setStatus('Fetching structure from Alexandria...');
+        const result = await fetchAlexandriaStructure(raw);
+        await onLoadStructure(result.content, result.fileName);
+      } else {
+        await onLoadStructure(raw, 'pasted');
+      }
+      structureText.value = '';
+    } catch (error) {
+      console.warn('Could not load pasted structure:', error);
+      if (error?.code === 'OPTIMADE_CORS_OR_NETWORK') {
+        showOptimadeWarning();
+      } else {
+        setStatus(`Error: ${error.message}`);
+      }
+    }
   }
 
   if (pasteTextButton) pasteTextButton.addEventListener('click', openPasteModal);
