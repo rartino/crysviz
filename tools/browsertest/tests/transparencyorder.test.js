@@ -241,14 +241,24 @@ function redCentroid(file) {
     const range = new Float32Array(4 * w);
     app.renderer.readRenderTargetPixels(pass.depthRangeTarget, 0, Math.floor(h / 2), w, 1, range);
     let covered = 0, depthOk = 0, maxDepth = 0;
+    let minNear = Infinity, maxNear = 0, minFar = Infinity, minGap = Infinity, maxGap = -Infinity;
+    const depthSamples = [];
     for (let i = 0; i < range.length; i += 4) {
-      const near = range[i], far = range[i + 3];
-      if (near >= 1) continue; // untouched pixel (cleared to 1)
+      const far = range[i + 3];
+      if (far <= 0) continue; // untouched pixel (cleared to transparent black)
+      const near = 1 - range[i];
       covered++;
       maxDepth = Math.max(maxDepth, far);
-      if (near > 0 && far >= near && far < 0.5) depthOk++;
+      minNear = Math.min(minNear, near); maxNear = Math.max(maxNear, near);
+      minFar = Math.min(minFar, far);
+      minGap = Math.min(minGap, far - near); maxGap = Math.max(maxGap, far - near);
+      if (depthSamples.length < 6) depthSamples.push([near, far]);
+      // Half-float/readback rounding can put identical one-fragment depths a
+      // few 1e-8 apart after decoding 1-near; accept that numeric noise.
+      if (near > 0 && far + 1e-6 >= near && far < 0.5) depthOk++;
     }
-    return { maxAlpha, covered, depthOk, maxDepth };
+    return { maxAlpha, covered, depthOk, maxDepth, minNear, maxNear, minFar,
+      minGap, maxGap, depthSamples };
   });
   H.check('wboit: first frame accumulates with the correct render stage (weighted alpha)',
     firstFrame.maxAlpha > 0.1 && firstFrame.maxAlpha < 5, JSON.stringify(firstFrame));

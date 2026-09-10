@@ -18,7 +18,6 @@ import {
 	FloatType,
 	HalfFloatType,
 	MaxEquation,
-	MinEquation,
 	NearestFilter,
 	OneFactor,
 	OneMinusSrcAlphaFactor,
@@ -493,10 +492,8 @@ class WboitPass extends Pass {
 
 		}
 
-		// LOCAL MODIFICATION (CrysViz): the DepthRange stage needs a separate
-		// MAX equation on the alpha channel; three.js falls back to the colour
-		// equation/factors when the *Alpha variants are null, so they are set
-		// explicitly for that stage and restored to null afterwards.
+		// LOCAL MODIFICATION (CrysViz): stage-specific blend state is restored
+		// to the material defaults before each stage is configured.
 		function prepareWboitBlending( stage ) {
 
 			wboitMeshes.forEach( ( mesh ) => {
@@ -536,15 +533,15 @@ class WboitPass extends Pass {
 
 						case WboitStages.DepthRange:
 
-							// rgb: nearest fragment depth (MIN), alpha: farthest (MAX).
-							// Factors are ignored by MIN/MAX but must be valid.
+							// rgb: max(1 - depth), which encodes the nearest fragment;
+							// alpha: max(depth), which records the farthest fragment.
+							// A single MAX equation lets the target start at transparent
+							// black. That remains correct when the renderer premultiplies
+							// clear colours (white with alpha zero otherwise becomes zero).
 							materials[ i ].blending = CustomBlending;
-							materials[ i ].blendEquation = MinEquation;
+							materials[ i ].blendEquation = MaxEquation;
 							materials[ i ].blendSrc = OneFactor;
 							materials[ i ].blendDst = OneFactor;
-							materials[ i ].blendEquationAlpha = MaxEquation;
-							materials[ i ].blendSrcAlpha = OneFactor;
-							materials[ i ].blendDstAlpha = OneFactor;
 							materials[ i ].depthWrite = false;
 							materials[ i ].depthTest = true;
 
@@ -650,7 +647,7 @@ class WboitPass extends Pass {
 		// Render Wboit Objects, Depth Range Pass (r = min depth, a = max depth)
 		prepareWboitBlending( WboitStages.DepthRange );
 		renderer.setRenderTarget( this.baseTarget );
-		renderer.setClearColor( _clearColorOne, 0.0 );
+		renderer.setClearColor( _clearColorZero, 0.0 );
 		renderer.clearColor();
 		renderer.render( scene, this.camera );
 		this.copyPass.render( renderer, this.depthRangeTarget, this.baseTarget );

@@ -268,9 +268,7 @@ const H = require('../harness');
       useAbsoluteIsoValue: false, isVisible: true,
     });
     structure.volumetricFields = new FieldContainer({ fileName: 'focus.cube', source: 'Cube', fields: [blob] });
-    fieldBrowser.selectedField = null;
-    fieldBrowser.setAvailableFields([blob]);
-    fieldBrowser.setSelectedField(0);
+    fieldBrowser.setCatalog(structure.volumetricFields.catalog);
     setActiveField(blob, false);
     updateField(0.5);
     const mesh = groups.isosurfaceGroup.meshes.positive;

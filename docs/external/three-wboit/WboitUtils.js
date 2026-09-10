@@ -11,8 +11,8 @@ const _stage = { value: 0.5 };
 // LOCAL MODIFICATION (CrysViz): textures the accumulation stage reads back
 // (both rendered earlier in the same WboitPass.render): the revealage buffer
 // (r = product of (1 - alpha) over every transparent fragment of the pixel)
-// and the depth-range buffer (r = nearest, a = farthest transparent fragment
-// depth). Shared uniform objects, bound into every patched shader — the pass
+// and the depth-range buffer (r = 1 - nearest, a = farthest transparent
+// fragment depth). Shared uniform objects, bound into every patched shader — the pass
 // assigns .value once per frame.
 const _revealage = { value: null };
 const _depthRange = { value: null };
@@ -122,9 +122,10 @@ class WboitUtils {
 						ivec2 wboitPx = ivec2( gl_FragCoord.xy );
 						float wboitReveal = texelFetch( tWboitRevealage, wboitPx, 0 ).r;
 						vec4 wboitRange = texelFetch( tWboitDepthRange, wboitPx, 0 );
-						float wboitSpan = wboitRange.a - wboitRange.r;
+						float wboitNear = 1.0 - wboitRange.r;
+						float wboitSpan = wboitRange.a - wboitNear;
 						float wboitT = wboitSpan > 1e-7
-							? clamp( ( gl_FragCoord.z - wboitRange.r ) / wboitSpan, 0.0, 1.0 )
+							? clamp( ( gl_FragCoord.z - wboitNear ) / wboitSpan, 0.0, 1.0 )
 							: 0.0;
 						float wboitOthers = clamp( wboitReveal / max( 1.0 - accum.a, 1e-4 ), 1e-4, 1.0 );
 						float w = pow( wboitOthers, wboitT );
@@ -133,9 +134,9 @@ class WboitUtils {
 
 					} else if ( renderStage == ${ WboitStages.DepthRange.toFixed( 1 ) } ) {
 
-						// LOCAL MODIFICATION (CrysViz): min (rgb, MIN blend) / max
-						// (alpha, MAX blend) fragment depth of the transparent set.
-						gl_FragColor = vec4( gl_FragCoord.z );
+						// LOCAL MODIFICATION (CrysViz): both channels use MAX blend:
+						// rgb encodes the nearest depth as 1-z; alpha stores farthest z.
+						gl_FragColor = vec4( vec3( 1.0 - gl_FragCoord.z ), gl_FragCoord.z );
 
 					} else if ( renderStage == ${ WboitStages.Revealage.toFixed( 1 ) } ) {
 
