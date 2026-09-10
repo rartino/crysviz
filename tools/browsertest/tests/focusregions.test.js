@@ -5,7 +5,7 @@
 // - overlapping regions preserve anything important to either region;
 // - centers/exceptions remain visible;
 // - focus alpha composes with, and never overwrites, authored atom alpha;
-// - the radial gradient ramps linearly between the inner and outer values;
+// - the radial gradient ramps linearly across the outer share of the inner sphere;
 // - polyhedra follow either their atoms' mean or the rule at their centroid;
 // - the volumetric field fades per vertex under the Field panel's opacity;
 // - the real defect CONTCAR can create and edit more than one region.
@@ -25,16 +25,17 @@ const H = require('../harness');
       innerEnabled: true, innerRadius: 2, innerOpacity: 0.8, outerOpacity: 0.2,
     };
     const second = { ...region, center: [10, 0, 0], centerSourceIndices: [] };
-    const gradient = { ...region, gradientEnabled: true, gradientRadius: 6 };
+    const gradient = { ...region, gradientEnabled: true, gradientFraction: 0.5 }; // ramp 1 -> 2 Å
     const poly = { vertices: [[1, 0, 0], [3, 0, 0]], vertexSrcList: [1, 2], centerIndex: null };
     return {
       gradientInside: focusOpacityAt([1, 0, 0], gradient, 1),
-      gradientMid: focusOpacityAt([4, 0, 0], gradient, 1),
-      gradientEdge: focusOpacityAt([6, 0, 0], gradient, 1),
-      gradientBeyond: focusOpacityAt([30, 0, 0], gradient, 1),
-      gradientNoInner: focusOpacityAt([3, 0, 0], { ...gradient, innerEnabled: false }, 1),
-      gradientClamped: focusOpacityAt([3, 0, 0], { ...gradient, gradientRadius: 1 }, 1),
-      gradientCenter: focusOpacityAt([4, 0, 0], gradient, 7),
+      gradientMid: focusOpacityAt([1.5, 0, 0], gradient, 1),
+      gradientEdge: focusOpacityAt([2, 0, 0], gradient, 1),
+      gradientBeyond: focusOpacityAt([3, 0, 0], gradient, 1),
+      gradientFull: focusOpacityAt([1, 0, 0], { ...gradient, gradientFraction: 1 }, 1),
+      gradientNone: focusOpacityAt([1.9, 0, 0], { ...gradient, gradientFraction: 0 }, 1),
+      gradientNoInner: focusOpacityAt([1, 0, 0], { ...gradient, innerEnabled: false }, 1),
+      gradientCenter: focusOpacityAt([1.5, 0, 0], gradient, 7),
       polyAverage: focusOpacityForPolyhedron(poly, [region]),
       polyPosition: focusOpacityForPolyhedron(poly, [{ ...region, polyhedraMode: 'position' }]),
       polyFocusCenter: focusOpacityForPolyhedron({ ...poly, centerIndex: 7 }, [region]),
@@ -59,13 +60,13 @@ const H = require('../harness');
   H.check('disabling the inner region applies the outer rule near a molecule',
     math.noInner === 0.2, JSON.stringify(math));
   const near = (a, b) => Math.abs(a - b) < 1e-9;
-  H.check('the radial gradient ramps linearly from the inner radius to the gradient radius',
+  H.check('the radial gradient ramps across the outer share of the inner sphere and meets the outer value at its edge',
     near(math.gradientInside, 0.8) && near(math.gradientMid, 0.5) && near(math.gradientEdge, 0.2)
       && near(math.gradientBeyond, 0.2), JSON.stringify(math));
-  H.check('without an inner region the gradient starts fully visible at the center',
-    near(math.gradientNoInner, 0.6), JSON.stringify(math));
-  H.check('a gradient radius inside the inner sphere degrades to the hard edge',
-    near(math.gradientClamped, 0.2), JSON.stringify(math));
+  H.check('a 100% share ramps from the center and a 0% share is the hard edge',
+    near(math.gradientFull, 0.5) && near(math.gradientNone, 0.8), JSON.stringify(math));
+  H.check('without an inner region the gradient has no effect',
+    near(math.gradientNoInner, 0.2), JSON.stringify(math));
   H.check('focus atoms stay exempt from the gradient', math.gradientCenter === 1, JSON.stringify(math));
   H.check('polyhedra average their atoms or take the rule at their centroid',
     near(math.polyAverage, 0.5) && near(math.polyPosition, 0.8) && math.polyFocusCenter === 1
@@ -104,12 +105,10 @@ const H = require('../harness');
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const attr = groups.atomsMesh.geometry.attributes.instanceOpacity;
     const centerSources = new Set([...first.centerSourceIndices, ...second.centerSourceIndices]);
-    // Beyond the inner sphere AND the default-on gradient shell of both regions.
-    const reach = (region) => Math.max(region.innerRadius, region.gradientRadius);
     const farIndex = wrapped.cart.findIndex((p, index) => index > 1
       && !centerSources.has(wrapped.srcIndex[index])
-      && Math.hypot(p[0] - first.center[0], p[1] - first.center[1], p[2] - first.center[2]) > reach(first)
-      && Math.hypot(p[0] - second.center[0], p[1] - second.center[1], p[2] - second.center[2]) > reach(second));
+      && Math.hypot(p[0] - first.center[0], p[1] - first.center[1], p[2] - first.center[2]) > first.innerRadius
+      && Math.hypot(p[0] - second.center[0], p[1] - second.center[1], p[2] - second.center[2]) > second.innerRadius);
     const { Force, Spin } = await import('./model/index.js');
     const { updateForces, updateSpins } = await import('./render/index.js');
     structure.forces = structure.atoms.map(() => new Force({ vector: [1, 0, 0] }));
@@ -155,10 +154,10 @@ const H = require('../harness');
     result.regionCount === 2 && result.cards === 2 && result.innerToggles === 2, JSON.stringify(result));
   H.check('new regions default to the radial gradient',
     result.gradientDefault === true, JSON.stringify(result));
-  H.check('the panel exposes inner radius, inner opacity, outer opacity, and gradient radius',
+  H.check('the panel exposes inner radius, inner opacity, outer opacity, and the gradient share',
     result.labels.includes('Inner radius') && result.labels.includes('Inner opacity')
-      && result.labels.includes('Outer opacity') && result.labels.includes('Gradient radius')
-      && !result.labels.includes('Outer radius')
+      && result.labels.includes('Outer opacity') && result.labels.includes('Gradient share of inner radius')
+      && !result.labels.includes('Outer radius') && !result.labels.includes('Gradient radius')
       && !result.labels.includes('Beyond opacity'), JSON.stringify(result.labels));
   H.check('the active inner region exposes editable fractional center coordinates',
     result.centerInputs === 3
@@ -174,23 +173,26 @@ const H = require('../harness');
     result.forceArrowOpacity <= 0.1001 && result.spinArrowOpacity <= 0.1001,
     JSON.stringify(result));
 
-  // Every card ends with the gradient toggle (on by default) and the polyhedra
-  // rule; switching the gradient off gives the hard edge, and switching it back
-  // on reveals its radius slider and changes what is drawn.
+  // Each card with an inner region carries the gradient toggle (on by default)
+  // and every card the polyhedra rule. Widen the first inner sphere over the
+  // far atom: with the gradient off it sits at full inner opacity; with the
+  // gradient ramping from the center it is partly faded but above the outer
+  // value.
   const gradientUi = await page.evaluate(async (farIndex) => {
     const { fileBrowser, groups } = await import('./state/store.js');
     const structure = fileBrowser.selectedStructure;
     const region = structure.focusRegions[0];
-    region.innerRadius = 0.1;
-    region.gradientRadius = 60; // wide enough to reach the far atom
+    region.innerRadius = 60; // covers the far atom
+    region.gradientFraction = 1; // ramp from the center
     const frame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const toggle = () => document.querySelector('#cvPanelBody-focusRegions [id^="focusGradient-"]');
-    toggle().click(); // off: hard edge
+    toggle().click(); // off: hard edge, far atom fully inside
     await frame();
     const before = groups.atomsMesh.geometry.attributes.instanceOpacity.getX(farIndex);
-    toggle().click(); // on again: gradient reaches the far atom
+    toggle().click(); // on again: ramp fades the far atom partway
     await frame();
     const after = groups.atomsMesh.geometry.attributes.instanceOpacity.getX(farIndex);
+    region.innerRadius = 0.1;
     return {
       toggles: document.querySelectorAll('#cvPanelBody-focusRegions [id^="focusGradient-"]').length,
       selects: document.querySelectorAll('#cvPanelBody-focusRegions .focus-regions-polyhedra select').length,
@@ -202,13 +204,13 @@ const H = require('../harness');
       before, after,
     };
   }, result.farIndex);
-  H.check('every region card ends with a gradient toggle and a polyhedra rule',
-    gradientUi.toggles === 2 && gradientUi.selects === 2
+  H.check('cards with an inner region carry a gradient toggle; every card a polyhedra rule',
+    gradientUi.toggles === 1 && gradientUi.selects === 2
       && gradientUi.options.join(',') === 'average,position', JSON.stringify(gradientUi));
-  H.check('the gradient toggle reveals its radius and lifts a far atom above the outer value',
-    gradientUi.enabled === true && gradientUi.labels.includes('Gradient radius')
-      && gradientUi.before <= 0.1001 && gradientUi.after > gradientUi.before + 0.05,
-    JSON.stringify(gradientUi));
+  H.check('the gradient toggle reveals its share slider and fades an atom inside the sphere partway',
+    gradientUi.enabled === true && gradientUi.labels.includes('Gradient share of inner radius')
+      && gradientUi.before >= 0.999 && gradientUi.after < gradientUi.before - 0.05
+      && gradientUi.after > 0.1001, JSON.stringify(gradientUi));
 
   // Polyhedra: whichever coordination polyhedra the defect cell yields, those
   // away from both focus atoms must be scaled by the outer value, and the
@@ -246,7 +248,6 @@ const H = require('../harness');
     const { fieldBrowser } = await import('./ui/FieldPanel.js');
     const { setActiveField, updateField } = await import('./render/index.js');
     const structure = fileBrowser.selectedStructure;
-    for (const region of structure.focusRegions) region.gradientEnabled = false;
     const lat = structure.lattice;
     const nx = 16, ny = 16, nz = 16;
     const values = new Float32Array(nx * ny * nz);

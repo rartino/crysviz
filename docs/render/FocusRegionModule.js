@@ -18,11 +18,12 @@ export const DEFAULT_FOCUS_REGION = Object.freeze({
   innerRadius: 3.5,
   innerOpacity: 1,
   outerOpacity: 0.15,
-  // Radial gradient (the default): opacity falls linearly from the inner value
-  // at the inner radius to the outer value at gradientRadius (Cartesian Å from
-  // the center). Off = the hard inner/outer edge.
+  // Radial gradient (the default): the outer part of the inner sphere ramps
+  // linearly from the inner opacity down to the outer opacity at the inner
+  // radius. gradientFraction is the share of the inner radius that ramps
+  // (0 = hard edge, 1 = ramp from the center). Off = the hard edge.
   gradientEnabled: true,
-  gradientRadius: 7,
+  gradientFraction: 0.5,
   // How a polyhedron follows the rule: 'average' of its atoms' focus opacity,
   // or the region rule evaluated at its own 'position' (centroid).
   polyhedraMode: 'average',
@@ -46,26 +47,25 @@ export function focusOpacityAt(point, region, sourceIndex = -1) {
   const dy = point[1] - region.center[1];
   const dz = point[2] - region.center[2];
   const distance = Math.hypot(dx, dy, dz);
-  // Without an inner region the focus atoms themselves are the object of
-  // interest: the gradient then falls from full visibility at the center.
-  const innerRadius = region.innerEnabled ? Math.max(0, Number(region.innerRadius) || 0) : 0;
-  const innerOpacity = region.innerEnabled ? clamp01(region.innerOpacity) : 1;
   const outerOpacity = clamp01(region.outerOpacity);
-  if (region.innerEnabled && distance <= innerRadius) return innerOpacity;
-  if (region.gradientEnabled) {
-    const gradientRadius = effectiveGradientRadius(region);
-    if (distance < gradientRadius) {
-      const t = (distance - innerRadius) / (gradientRadius - innerRadius);
-      return innerOpacity + (outerOpacity - innerOpacity) * Math.max(0, Math.min(1, t));
-    }
-  }
-  return outerOpacity;
+  if (!region.innerEnabled) return outerOpacity;
+  const innerRadius = Math.max(0, Number(region.innerRadius) || 0);
+  if (distance > innerRadius) return outerOpacity;
+  const innerOpacity = clamp01(region.innerOpacity);
+  // The gradient shell is the outer part of the inner sphere: full inner
+  // opacity up to gradientStartRadius, then a linear ramp that reaches the
+  // outer opacity exactly at the inner radius, so the boundary is seamless.
+  const start = gradientStartRadius(region);
+  if (!region.gradientEnabled || distance <= start || innerRadius <= start) return innerOpacity;
+  const t = (distance - start) / (innerRadius - start);
+  return innerOpacity + (outerOpacity - innerOpacity) * Math.max(0, Math.min(1, t));
 }
 
-/** Outer edge of the gradient shell; never inside the inner sphere. */
-export function effectiveGradientRadius(region) {
-  const innerRadius = region?.innerEnabled ? Math.max(0, Number(region.innerRadius) || 0) : 0;
-  return Math.max(innerRadius, Number(region?.gradientRadius) || 0);
+/** Where the gradient ramp begins (Å from the center): the inner radius
+ * minus the fraction of it given to the gradient. */
+export function gradientStartRadius(region) {
+  const innerRadius = Math.max(0, Number(region?.innerRadius) || 0);
+  return innerRadius * (1 - clamp01(region?.gradientFraction ?? DEFAULT_FOCUS_REGION.gradientFraction));
 }
 
 /** Multiple regions combine by maximum visibility: importance in one region
@@ -96,10 +96,13 @@ export function getFocusRegions(structure = fileBrowser.selectedStructure) {
     // Regions saved before the gradient / polyhedra settings existed keep the
     // hard edge they were authored with; only new regions default to a gradient.
     if (typeof region.gradientEnabled !== 'boolean') region.gradientEnabled = false;
-    if (!Number.isFinite(Number(region.gradientRadius))) {
-      region.gradientRadius = Math.max(DEFAULT_FOCUS_REGION.gradientRadius,
-        (Number(region.innerRadius) || 0) + 3);
+    // One-development-version migration: the gradient briefly extended
+    // OUTSIDE the inner sphere to an absolute gradientRadius.
+    if (Object.hasOwn(region, 'gradientRadius')) delete region.gradientRadius;
+    if (!Number.isFinite(Number(region.gradientFraction))) {
+      region.gradientFraction = DEFAULT_FOCUS_REGION.gradientFraction;
     }
+    region.gradientFraction = clamp01(region.gradientFraction);
     if (!POLYHEDRA_FOCUS_MODES.includes(region.polyhedraMode)) region.polyhedraMode = 'average';
   }
   return regions;

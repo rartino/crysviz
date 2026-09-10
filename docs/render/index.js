@@ -57,7 +57,7 @@ export {
 export { applyFrameFast, BOND_TOPOLOGY_STRIDE, lastFastFrameBail } from './FastFrameModule.js';
 
 export {
-  DEFAULT_FOCUS_REGION, POLYHEDRA_FOCUS_MODES, focusOpacityAt, effectiveGradientRadius,
+  DEFAULT_FOCUS_REGION, POLYHEDRA_FOCUS_MODES, focusOpacityAt, gradientStartRadius,
   combinedFocusOpacity, focusOpacityForPolyhedron, getFocusOpacityForPolyhedron, getFocusRegions,
   focusRegionsActive, getFocusOpacityForInstance, prepareFocusRegions, createFocusRegion,
   removeFocusRegion, clearFocusRegions, applyFocusRegions, setFocusRegionCenterFractional,

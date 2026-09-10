@@ -1,6 +1,6 @@
 import { fileBrowser } from '../state/store.js';
 import {
-  applyFocusRegions, createFocusRegion, effectiveGradientRadius, getFocusRegions,
+  applyFocusRegions, createFocusRegion, getFocusRegions, gradientStartRadius,
   prepareFocusRegions, removeFocusRegion, resetFocusRegionCenter, setFocusRegionCenterFractional,
 } from '../render/index.js';
 import {
@@ -179,13 +179,15 @@ function renderRegionCard(region, index, rerender) {
   });
   exceptions.append(exceptionText, addExceptions, clearExceptions);
   card.appendChild(exceptions);
-  card.appendChild(gradientEditor(region, rerender));
+  // The gradient lives inside the inner sphere, so it has nothing to shape
+  // while the inner region is off.
+  if (region.innerEnabled !== false) card.appendChild(gradientEditor(region, rerender));
   card.appendChild(polyhedraModeEditor(region));
   return card;
 }
 
-/** Radial gradient: a linear opacity ramp from the inner region (or the
- * center, when the inner region is off) out to the gradient radius. */
+/** Radial gradient: the outer share of the inner sphere ramps linearly from
+ * the inner opacity down to the outer opacity at the inner radius. */
 function gradientEditor(region, rerender) {
   const wrap = document.createElement('div');
   wrap.className = 'focus-regions-gradient';
@@ -203,12 +205,13 @@ function gradientEditor(region, rerender) {
     const hint = document.createElement('span');
     hint.className = 'focus-regions-summary';
     const refreshHint = () => {
-      const from = region.innerEnabled !== false ? 'the inner radius' : 'the center';
-      hint.textContent = `Opacity ramps linearly from ${from} to ${effectiveGradientRadius(region).toFixed(1)} Å.`;
+      const start = gradientStartRadius(region);
+      const edge = Math.max(0, Number(region.innerRadius) || 0);
+      hint.textContent = `Full inner opacity to ${start.toFixed(1)} Å, then a linear ramp to the outer opacity at the inner radius (${edge.toFixed(1)} Å).`;
     };
     refreshHint();
-    wrap.appendChild(rangeRow('Gradient radius', region.gradientRadius, 0, 30, 0.1, (value) => {
-      region.gradientRadius = value;
+    wrap.appendChild(rangeRow('Gradient share of inner radius', region.gradientFraction, 0, 1, 0.01, (value) => {
+      region.gradientFraction = value;
       refreshHint();
       applyFocusRegions();
     }));

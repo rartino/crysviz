@@ -18,10 +18,11 @@ Bonds, hydrogen bonds, forces, spins, charge badges, polyhedra, and the
 volumetric field follow the same region. The field keeps its Field panel
 opacity as the maximum and fades per vertex where the surrounding atoms fade.
 
-**Radial gradient**, on by default, replaces the hard edge with a linear ramp:
-opacity falls from the inner value at the inner radius to the outer value at
-the **gradient radius**. Turn it off for a sharp inner/outer boundary. With the
-inner region off, the ramp starts fully visible at the center. **Polyhedra opacity** chooses whether a polyhedron takes the
+**Radial gradient**, on by default, softens the edge of the inner sphere from
+within: the outer share of the inner radius ramps linearly from the inner
+opacity down to the outer opacity, reaching it exactly at the inner radius.
+The slider sets that share, from 0% (a hard edge) to 100% (a ramp from the
+center). It only applies while the inner region is on. **Polyhedra opacity** chooses whether a polyhedron takes the
 average of its atoms' focus opacity or the rule evaluated at its own centroid.
 Use **Exclude selection** to keep additional atoms unchanged. Every focus atom
 is preserved globally, so adding another region never dims an earlier focus.
