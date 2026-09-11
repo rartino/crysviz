@@ -9,8 +9,16 @@
  *   TITL name pressure volume enthalpy spin modspin nAtoms (symmetry) … copies
  *   CELL wavelength a b c α β γ
  *   SFAC El1 El2 …            (maps the numeric SFAC index on each atom line)
- *   <label> SFAC# x y z [occ] (fractional coordinates)
+ *   FVAR osf fv2 fv3 …        (SHELX free variables, for coded occupancies)
+ *   <label> SFAC# x y z [sof] (fractional coordinates)
  *   REM / END                 (comments / block terminator)
+ *
+ * Every other SHELX instruction (ZERR, LATT, SYMM, UNIT, HKLF, L.S., WGHT, …)
+ * is skipped by name: `ZERR 2 0.0004 0.0004 0.0005` has exactly the shape of
+ * an atom line and used to load as an atom. The site occupation factor uses
+ * the SHELX `10*k + p` coding: 11.0 is fixed at 1.0, 10.5 fixed at 0.5, and
+ * k >= 2 (or <= -2) scales p by free variable k (or 1 - fv_k). AIRSS writes a
+ * plain 1.0, which passes through unchanged.
  *
  * Positions are fractional (wrapped into [0, 1)); the lattice is built from the
  * CELL parameters. The TITL enthalpy is carried onto Structure.energy so the
@@ -22,9 +30,40 @@ import { Structure, StructureContainer, Atom } from '../model/index.js';
 import { latticeFromCell, normalizeFractional } from '../math/index.js';
 import { runPeriodicWrapped } from '../render/index.js';
 
+// SHELX instructions that can look like an atom line (`NAME int float …`)
+// or that otherwise precede the atom list. Anything here is never an atom.
+const SHELX_INSTRUCTIONS = new Set([
+  'TITL', 'CELL', 'ZERR', 'LATT', 'SYMM', 'SFAC', 'DISP', 'UNIT', 'LAUE', 'REM', 'MORE', 'TIME',
+  'END', 'HKLF', 'OMIT', 'SHEL', 'BASF', 'TWIN', 'EXTI', 'SWAT', 'HOPE', 'MERG', 'SPEC', 'RESI',
+  'MOVE', 'ANIS', 'AFIX', 'HFIX', 'FRAG', 'FEND', 'EXYZ', 'EADP', 'EQIV', 'CONN', 'PART', 'BIND',
+  'FREE', 'DFIX', 'DANG', 'BUMP', 'SAME', 'SADI', 'CHIV', 'FLAT', 'DELU', 'SIMU', 'RIGU', 'DEFS',
+  'ISOR', 'NCSY', 'SUMP', 'L.S.', 'CGLS', 'BLOC', 'DAMP', 'STIR', 'WGHT', 'FVAR', 'BOND', 'CONF',
+  'MPLA', 'RTAB', 'HTAB', 'LIST', 'ACTA', 'SIZE', 'TEMP', 'WPDB', 'FMAP', 'GRID', 'PLAN', 'MOLE',
+  'ABIN', 'ANSC', 'ANSR', 'NEUT', 'PRIG', 'XNPD', 'TWST', 'WIGL',
+]);
+
+/**
+ * Decode a SHELX site occupation factor. `sof = 10*k + p`: k = 0 is a free
+ * value p; k = 1 is p held fixed; k >= 2 means p × free variable k, and
+ * k <= -2 means p × (1 − free variable |k|). `fvar` is 1-indexed like SHELX
+ * (fvar[1] is the overall scale factor, never used for occupancy).
+ * @param {number} sof @param {number[]} fvar
+ */
+function decodeOccupancy(sof, fvar) {
+  if (!Number.isFinite(sof)) return 1.0;
+  if (Math.abs(sof) < 5) return sof;
+  const k = Math.trunc(sof / 10);
+  const p = sof - 10 * k;
+  if (k === 1) return p;
+  const fv = fvar[Math.abs(k)];
+  if (k >= 2) return Number.isFinite(fv) ? p * fv : p;
+  if (k <= -2) return Number.isFinite(fv) ? p * (1 - fv) : p;
+  return p;
+}
+
 /** A fresh, empty accumulator for one TITL…END block. */
 function emptyRecord() {
-  return { title: null, cell: null, lattice: null, atoms: [], metadata: {}, species: [] };
+  return { title: null, cell: null, lattice: null, atoms: [], metadata: {}, species: [], fvar: [] };
 }
 
 /**
@@ -99,15 +138,25 @@ function parseResContent(content) {
       continue;
     }
 
-    // Atom line: "<label> <SFAC#> x y z [occ] …"
+    // FVAR: free variables, possibly over several lines; SHELX numbers them
+    // from 1 (the overall scale factor), so index 0 stays unused.
+    if (/^FVAR\b/i.test(trimmed)) {
+      if (!current.fvar.length) current.fvar.push(NaN);
+      current.fvar.push(...trimmed.split(/\s+/).slice(1).map(parseFloat));
+      continue;
+    }
+
+    const keyword = trimmed.split(/\s+/)[0].toUpperCase();
+    if (SHELX_INSTRUCTIONS.has(keyword)) continue;
+
+    // Atom line: "<label> <SFAC#> x y z [sof] …"
     if (/^[A-Za-z][A-Za-z0-9']*\s+\d+\s/.test(trimmed)) {
       const parts = trimmed.split(/\s+/);
       const label = parts[0];
       const sfacIndex = parseInt(parts[1], 10) - 1; // SHELX SFAC# is 1-indexed
-      const x = normalizeFractional(parseFloat(parts[2]));
-      const y = normalizeFractional(parseFloat(parts[3]));
-      const z = normalizeFractional(parseFloat(parts[4]));
-      if (![x, y, z].every(Number.isFinite)) continue;
+      const raw = [parts[2], parts[3], parts[4]].map(parseFloat);
+      if (!raw.every(Number.isFinite)) continue;
+      const [x, y, z] = raw.map(normalizeFractional);
 
       // Prefer the SFAC element; fall back to the atom label when SFAC is absent
       // or the index is out of range.
@@ -115,7 +164,7 @@ function parseResContent(content) {
         ? current.species[sfacIndex]
         : label.replace(/[0-9'].*$/, '');
 
-      const occ = parts.length > 5 ? parseFloat(parts[5]) : 1.0;
+      const occ = parts.length > 5 ? decodeOccupancy(parseFloat(parts[5]), current.fvar) : 1.0;
       current.atoms.push({
         element,
         position: [x, y, z],
