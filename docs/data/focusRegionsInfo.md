@@ -32,8 +32,9 @@ opacity down to the outer opacity, reaching it exactly at the inner radius.
 The slider sets that share, from 0% (a hard edge) to 100% (a ramp from the
 center). It only applies while the inner region is on. **Polyhedra opacity** chooses whether a polyhedron takes the
 average of its atoms' focus opacity or the rule evaluated at its own centroid.
-Use **Exclude selection** to keep additional atoms unchanged. Every focus atom
-is preserved globally, so adding another region never dims an earlier focus.
+Every atom follows the rule, including the atoms the region was created
+from. Use **Exclude selection** to keep chosen atoms unchanged; the exclusion
+list is the only exemption.
 
 **Select inner atoms** replaces the current selection with atoms inside the
 sphere plus all exceptions. The Structure panel can then show and copy their
