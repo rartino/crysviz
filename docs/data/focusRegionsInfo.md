@@ -16,6 +16,10 @@ Regions repeat with the lattice: distances are measured to the nearest
 periodic image of the center, so widening the active cell boundary shows the
 same focus around every periodic copy of the selected atoms.
 
+Regions are remembered per structure: open the same file again after a
+browser reload and they come back (see the Settings window's "Clear local
+data" to forget them).
+
 Regions are non-destructive: their opacity is combined with existing atom
 opacity without changing it. Overlapping regions keep the most visible result.
 Bonds, hydrogen bonds, forces, spins, charge badges, polyhedra, and the
@@ -28,8 +32,9 @@ opacity down to the outer opacity, reaching it exactly at the inner radius.
 The slider sets that share, from 0% (a hard edge) to 100% (a ramp from the
 center). It only applies while the inner region is on. **Polyhedra opacity** chooses whether a polyhedron takes the
 average of its atoms' focus opacity or the rule evaluated at its own centroid.
-Use **Exclude selection** to keep additional atoms unchanged. Every focus atom
-is preserved globally, so adding another region never dims an earlier focus.
+Every atom follows the rule, including the atoms the region was created
+from. Use **Exclude selection** to keep chosen atoms unchanged; the exclusion
+list is the only exemption.
 
 **Select inner atoms** replaces the current selection with atoms inside the
 sphere plus all exceptions. The Structure panel can then show and copy their

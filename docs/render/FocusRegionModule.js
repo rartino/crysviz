@@ -4,6 +4,7 @@
 
 import * as THREE from '../external/three/three.module.js';
 import { fileBrowser, groups, general } from '../state/store.js';
+import { readStructurePrefs, scheduleStructurePrefSave } from '../state/structurePrefs.js';
 import { cartToFrac, fracToCart, invert3x3, transpose3x3 } from '../math/index.js';
 import { applyTransparency } from '../utils/TransparencyPolicy.js';
 import { requestRender } from './AnimateModule.js';
@@ -101,11 +102,12 @@ export function focusDistanceTo(point, region, structure = fileBrowser.selectedS
 
 /** Visibility proposed by one region for a Cartesian point. `basis` (see
  * periodicBasis) makes the rule lattice-periodic; null evaluates it in open
- * space. */
+ * space. The atoms a region was created from get no special treatment: they
+ * sit at the center and follow the rule like every other inner atom. Only the
+ * exclusion list exempts an atom. */
 export function focusOpacityAt(point, region, sourceIndex = -1, basis = null) {
   if (!region?.enabled || !region.center?.length) return 1;
-  if (region.centerSourceIndices?.includes(sourceIndex)
-      || region.excludedSourceIndices?.includes(sourceIndex)) return 1;
+  if (region.excludedSourceIndices?.includes(sourceIndex)) return 1;
   const outerOpacity = clamp01(region.outerOpacity);
   if (!region.innerEnabled) return outerOpacity;
   const distance = minimumImageDistance(point, region.center, basis);
@@ -133,11 +135,8 @@ export function gradientStartRadius(region) {
 export function combinedFocusOpacity(point, sourceIndex, regions, basis = null) {
   const enabled = (regions ?? []).filter((region) => region?.enabled && region.center?.length);
   if (!enabled.length) return 1;
-  // Focus atoms are global exceptions. Without this explicit union, a newly
-  // added region could dim an earlier focus when region state is restored from
-  // an older share or temporarily lacks a resolved center position.
-  if (enabled.some((region) => region.centerSourceIndices?.includes(sourceIndex)
-      || region.excludedSourceIndices?.includes(sourceIndex))) return 1;
+  // Exclusions are global: an atom excluded in any region is never dimmed.
+  if (enabled.some((region) => region.excludedSourceIndices?.includes(sourceIndex))) return 1;
   let opacity = 0;
   for (const region of enabled) opacity = Math.max(opacity, focusOpacityAt(point, region, sourceIndex, basis));
   return opacity;
@@ -238,10 +237,10 @@ export function focusOpacityForPolyhedron(poly, regions, basis = null) {
     point: vertex, source: poly.vertexSrcList?.[index] ?? -1,
   }));
   if (centerSource >= 0) atoms.push({ point: centroid, source: centerSource });
-  // Focus atoms and exceptions are global (see combinedFocusOpacity).
-  const isException = (source) => source >= 0 && enabled.some((region) =>
-    region.centerSourceIndices?.includes(source) || region.excludedSourceIndices?.includes(source));
-  if (isException(centerSource)) return 1;
+  // Exclusions are global (see combinedFocusOpacity).
+  const isExcluded = (source) => source >= 0 && enabled.some((region) =>
+    region.excludedSourceIndices?.includes(source));
+  if (isExcluded(centerSource)) return 1;
   let opacity = 0;
   for (const region of enabled) {
     let proposal;
@@ -249,7 +248,7 @@ export function focusOpacityForPolyhedron(poly, regions, basis = null) {
       proposal = focusOpacityAt(centroid, region, centerSource, basis);
     } else {
       proposal = atoms.reduce((sum, atom) => sum
-        + (isException(atom.source) ? 1 : focusOpacityAt(atom.point, region, atom.source, basis)), 0) / atoms.length;
+        + (isExcluded(atom.source) ? 1 : focusOpacityAt(atom.point, region, atom.source, basis)), 0) / atoms.length;
     }
     opacity = Math.max(opacity, proposal);
   }
@@ -288,6 +287,37 @@ export function createFocusRegion(centerAtoms, structure = fileBrowser.selectedS
   return region;
 }
 
+/** The regions as plain JSON (what ShareModule's captureState stores too);
+ *  [] when there are none, which drops the stored field. */
+function serializeFocusRegions(structure) {
+  const regions = structure?.focusRegions;
+  return Array.isArray(regions) && regions.length ? JSON.parse(JSON.stringify(regions)) : [];
+}
+
+/**
+ * Re-apply the focus regions saved for this container in an earlier session
+ * to the frame now on screen. Regions live on the displayed Structure (not in
+ * a trajectory's per-frame records), so unlike the atom colours this runs
+ * AFTER the first frame exists — from ui/StructureInputModule.js's
+ * initializeUIOnLoad, right after the row is selected — and repaints the
+ * per-instance opacity itself. `structure` must belong to `container` (an
+ * asynchronously materialised first frame isn't selected yet: nothing is
+ * applied then). Returns the number of regions applied.
+ * @param {any} container a StructureContainer
+ * @param {any} [structure] the displayed frame
+ * @returns {number}
+ */
+export function restoreFocusRegions(container, structure = fileBrowser.selectedStructure) {
+  const regions = readStructurePrefs(container)?.focusRegions;
+  if (!Array.isArray(regions) || !regions.length || !structure) return 0;
+  const owns = typeof container?.ownsStructure === 'function'
+    ? container.ownsStructure(structure) : !!container?.structures?.includes(structure);
+  if (!owns) return 0;
+  structure.focusRegions = JSON.parse(JSON.stringify(regions));
+  applyFocusRegions(structure);
+  return structure.focusRegions.length;
+}
+
 export function removeFocusRegion(id, structure = fileBrowser.selectedStructure) {
   if (!structure?.focusRegions) return;
   structure.focusRegions = structure.focusRegions.filter((region) => region.id !== id);
@@ -300,6 +330,13 @@ export function clearFocusRegions(structure = fileBrowser.selectedStructure) {
 }
 
 export function applyFocusRegions(structure = fileBrowser.selectedStructure) {
+  // Every focus-region edit (panel sliders/toggles, create/remove/clear,
+  // centre edits) ends here, so this is the one place the regions get
+  // persisted for the next session (state/structurePrefs.js; debounced —
+  // sliders fire per pointer move and fast-frame playback calls this per
+  // frame). Stored by structure content, so the same file re-opened after a
+  // reload gets its regions back (restoreFocusRegions below).
+  if (structure) scheduleStructurePrefSave(structure, 'focusRegions', () => serializeFocusRegions(structure));
   const mesh = groups.atomsMesh;
   const wrapped = structure?.periodic?.visibleWrapped;
   const opacityAttr = mesh?.geometry?.attributes?.instanceOpacity;
