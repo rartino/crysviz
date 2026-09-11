@@ -261,7 +261,13 @@ export function updateVisualization(options = {}) {
     initModifyStructureButton();
   }
   console.time("uv:updateLattice");
-  if (reRenderLattice) updateLattice(general.currentLatticeColor);
+  if (reRenderLattice) {
+    updateLattice(general.currentLatticeColor);
+    // The field copies are translated by the structure lattice (a supercell
+    // repeats the field's original sub-cell, gaps included), so re-seat them
+    // whenever the lattice is rebuilt. Idempotent and cheap when unchanged.
+    if (!reRenderPeriodic) applyFieldPeriodicBounds();
+  }
   console.timeEnd("uv:updateLattice");
   console.time("uv:updateOther");
   if (reRenderOther) updateOther();

@@ -217,8 +217,12 @@ export function toggleFieldVisibility(visible) {
 export function applyFieldPeriodicBounds() {
   const isosurface = groups.isosurfaceGroup;
   if (!isosurface?.setPeriodicBounds) return;
+  // The bounds are fractions of the STRUCTURE lattice; the field keeps its own
+  // grid cell (not duplicated by a supercell), so the copies must repeat that
+  // cell, gaps included, with the structure's lattice vectors.
   isosurface.setPeriodicBounds(
-    general.showPeriodic ? normalizePeriodicBounds(general.periodicBounds) : undefined);
+    general.showPeriodic ? normalizePeriodicBounds(general.periodicBounds) : undefined,
+    fileBrowser.selectedStructure?.lattice ?? null);
 }
 
 export function updateField(iso = null) {

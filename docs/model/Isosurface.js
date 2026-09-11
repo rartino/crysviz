@@ -243,6 +243,13 @@ export class Isosurface extends THREE.Group{
         this._imageMeshes = [];
         /** @type {[number, number][]} the boundary these copies were built for */
         this._periodicBounds = UNIT_BOUNDS;
+        /** The structure lattice the boundary is expressed in (rows = vectors,
+         *  world units). Null = this field's own grid cell. The two differ once
+         *  a supercell is built after the field was loaded: the field is NOT
+         *  duplicated, it keeps its original sub-cell, and the copies and the
+         *  clipping box have to repeat that sub-cell (gaps included) with the
+         *  structure's lattice, not tile the grid cell contiguously. */
+        this._lattice = null;
 
         this.addMeshes();
 
@@ -386,18 +393,53 @@ export class Isosurface extends THREE.Group{
      * boundary, the field or the pipeline changes.
      *
      * @param {[number, number][]} [bounds] per-axis [min, max] in fractional
-     *   coordinates, as render/LatticeModule.js normalizePeriodicBounds()
-     *   returns. Defaults to the plain unit cell.
+     *   coordinates OF THE STRUCTURE LATTICE, as render/LatticeModule.js
+     *   normalizePeriodicBounds() returns. Defaults to the plain unit cell.
+     * @param {number[][]|null} [lattice] the structure lattice those fractions
+     *   refer to (rows = vectors, world units). Omitted: this field's own cell.
      */
-    setPeriodicBounds(bounds = UNIT_BOUNDS) {
+    setPeriodicBounds(bounds = UNIT_BOUNDS, lattice = null) {
         const safe = /** @type {[number, number][]} */ (
             Array.isArray(bounds) && bounds.length === 3
                 && bounds.every((b) => Array.isArray(b) && b.length === 2 && b.every(Number.isFinite))
                 ? bounds.map(([lo, hi]) => (lo <= hi ? [lo, hi] : [hi, lo]))
                 : UNIT_BOUNDS);
+        const validLattice = Array.isArray(lattice) && lattice.length === 3
+            && lattice.every((row) => Array.isArray(row) && row.length === 3 && row.every(Number.isFinite));
         this._periodicBounds = safe;
+        this._lattice = validLattice ? lattice.map((row) => [...row]) : null;
         this._syncImageMeshes(boundsImageOffsets(safe));
         this._applyBoundsClipping(safe);
+    }
+
+    /** The lattice the boundary repeats the field with: the structure's when
+     *  known, else this field's own grid cell. */
+    _boundaryVectors() {
+        return this._lattice ?? this._cellVectors();
+    }
+
+    /** True when the boundary lattice is this field's own grid cell (within
+     *  rounding), i.e. the field fills exactly one boundary cell. */
+    _latticeIsOwnCell() {
+        if (!this._lattice) return true;
+        const own = this._cellVectors();
+        return own.every((vec, i) => vec.every((v, k) => Math.abs(v - this._lattice[i][k]) < 1e-6));
+    }
+
+    /** A whole-lattice translation [i,j,k] as a position in this group's local
+     *  space. Local space is the grid's fractional coordinates, so the
+     *  translation is the integer offset itself when the boundary lattice IS
+     *  the grid cell, and the (linear) inverse of the group matrix applied to
+     *  i*a + j*b + k*c otherwise. */
+    _imagePosition([i, j, k]) {
+        if (this._latticeIsOwnCell()) return new THREE.Vector3(i, j, k);
+        const [a, b, c] = this._lattice;
+        const world = new THREE.Vector3(
+            i * a[0] + j * b[0] + k * c[0],
+            i * a[1] + j * b[1] + k * c[1],
+            i * a[2] + j * b[2] + k * c[2]);
+        const toLocal = new THREE.Matrix3().setFromMatrix4(new THREE.Matrix4().copy(this.matrix).invert());
+        return world.applyMatrix3(toLocal);
     }
 
     /** The cell this field is drawn in, read back out of the group's own
@@ -418,17 +460,21 @@ export class Isosurface extends THREE.Group{
      *  and the rest become shared-geometry copies. */
     _syncImageMeshes(offsets) {
         const [first, ...rest] = offsets.length ? offsets : [[0, 0, 0]];
+        const firstPosition = this._imagePosition(first);
         for (const key of ['positive', 'negative']) {
-            this.meshes?.[key]?.position.set(first[0], first[1], first[2]);
+            this.meshes?.[key]?.position.copy(firstPosition);
         }
 
-        // Rebuild the copy list only when the cells themselves changed; a
-        // slider drag inside one cell then costs nothing but the clip update.
-        const key = rest.map((o) => o.join(',')).join(';');
+        // Rebuild the copy list only when the cells themselves (or the lattice
+        // they are translated by) changed; a slider drag inside one cell then
+        // costs nothing but the clip update.
+        const latticeKey = (this._lattice ?? []).flat().map((v) => v.toFixed(6)).join(',');
+        const key = `${rest.map((o) => o.join(',')).join(';')}|${latticeKey}`;
         if (key !== this._imageKey) {
             for (const mesh of this._imageMeshes) this.remove(mesh);
             this._imageMeshes = [];
             for (const [i, j, k] of rest) {
+                const position = this._imagePosition([i, j, k]);
                 for (const lobe of ['positive', 'negative']) {
                     const base = this.meshes?.[lobe];
                     if (!base) continue;
@@ -437,7 +483,7 @@ export class Isosurface extends THREE.Group{
                     // from the original's colour, opacity or transparency
                     // policy — and sharing keeps a wide boundary cheap.
                     const image = new THREE.Mesh(base.geometry, base.material);
-                    image.position.set(i, j, k);
+                    image.position.copy(position);
                     image.name = `${base.name}_image_${i}_${j}_${k}`;
                     image.userData.fieldLobe = lobe;
                     image.userData.isFieldPeriodicImage = true;
@@ -463,13 +509,16 @@ export class Isosurface extends THREE.Group{
         }
     }
 
-    /** Clip every copy to the boundary box. Nothing is clipped for the plain
-     *  unit cell — the field already ends at the cell faces there, so the
-     *  default costs no clipping planes in the shader at all. */
+    /** Clip every copy to the boundary box (in the structure lattice's
+     *  fractional coordinates). Nothing is clipped for the plain unit cell of
+     *  the field's own grid — the field already ends at the cell faces there,
+     *  so the default costs no clipping planes in the shader at all. With a
+     *  different structure lattice even the unit cell clips, because the grid
+     *  may reach past it (a cell reduced after the field was loaded). */
     _applyBoundsClipping(bounds) {
-        const planes = isUnitBounds(bounds)
+        const planes = isUnitBounds(bounds) && this._latticeIsOwnCell()
             ? null
-            : makeFractionalBoundsClippingPlanes(this._cellVectors(), bounds);
+            : makeFractionalBoundsClippingPlanes(this._boundaryVectors(), bounds);
         for (const key of ['positive', 'negative']) {
             const material = this.meshes?.[key]?.material;
             if (!material) continue;

@@ -401,6 +401,10 @@ export class RayTracingPipeline extends ForwardPipeline {
       uFieldBoundsMin: { value: new THREE.Vector3(0, 0, 0) },
       uFieldBoundsMax: { value: new THREE.Vector3(1, 1, 1) },
       uFieldWrap: { value: false },
+      // the structure lattice's fractional space the boundary lives in
+      uFieldWorldToCell: { value: new THREE.Matrix4() },
+      uFieldCellToFrac: { value: new THREE.Matrix4() },
+      uFieldSpanCells: { value: 1 },
       uFieldIso: { value: 0 },
       uFieldAbsMode: { value: false },
       uFieldPosColor: { value: new THREE.Color(0x33aaff) },
@@ -980,6 +984,9 @@ export class RayTracingPipeline extends ForwardPipeline {
       u.uFieldBoundsMin.value.copy(this._encoder.fieldBoundsMin);
       u.uFieldBoundsMax.value.copy(this._encoder.fieldBoundsMax);
       u.uFieldWrap.value = this._encoder.fieldWrap;
+      u.uFieldWorldToCell.value.copy(this._encoder.fieldWorldToCell);
+      u.uFieldCellToFrac.value.copy(this._encoder.fieldCellToFrac);
+      u.uFieldSpanCells.value = this._encoder.fieldSpanCells;
       u.uFieldIso.value = this._encoder.fieldIso;
       u.uFieldAbsMode.value = this._encoder.fieldAbsMode;
       u.uFieldPosColor.value.copy(this._encoder.fieldPosColor);

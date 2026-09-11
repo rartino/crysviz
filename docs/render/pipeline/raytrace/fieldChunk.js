@@ -31,13 +31,20 @@ uniform bool uFieldEnabled;
 uniform highp sampler3D uFieldTex;
 uniform mat4 uFieldWorldToFrac; // world -> fractional [0,1]^3 cube
 uniform ivec3 uFieldDims;
-// Periodic display boundary (general.periodicBounds) in that fractional space.
-// [0,1] is the plain unit cell; wider bounds march the neighbouring cells too
-// and uFieldWrap makes the sample coordinate periodic, which is the tracer's
-// equivalent of the raster pipelines' translated + clipped mesh copies.
+// Periodic display boundary (general.periodicBounds), in the STRUCTURE
+// lattice's fractional space (uFieldWorldToCell). [0,1] is the plain unit
+// cell; wider bounds march the neighbouring cells too and uFieldWrap folds
+// the sample coordinate back into the cell, which is the tracer's equivalent
+// of the raster pipelines' translated + clipped mesh copies. uFieldCellToFrac
+// then maps the cell point into the grid: the grid can cover only part of the
+// cell (a supercell built after the field was loaded keeps the field in its
+// original sub-cell, it is not duplicated), and the gaps repeat with the cell.
 uniform vec3 uFieldBoundsMin;
 uniform vec3 uFieldBoundsMax;
 uniform bool uFieldWrap;
+uniform mat4 uFieldWorldToCell; // world -> structure-cell fractions
+uniform mat4 uFieldCellToFrac;  // structure-cell fractions -> grid fractions [0,1]^3
+uniform float uFieldSpanCells;  // widest boundary span in grid-cell units (step budget)
 uniform float uFieldIso;
 uniform bool uFieldAbsMode; // true: two lobes at +/-|iso| (pos/neg colours)
 uniform vec3 uFieldPosColor;
@@ -51,11 +58,7 @@ uniform vec4 uFieldMaterial; // encoded tracer material texel (type, roughness, 
 float sampleField(vec3 frac)
 {
 	ivec3 maxIdx = uFieldDims - ivec3(1);
-	// Outside the unit cell the field simply repeats (that is what makes the
-	// display boundary meaningful for it), so fold the coordinate back in.
-	// Guarded by uFieldWrap so the in-cell case keeps the exact clamp above.
-	vec3 fw = uFieldWrap ? frac - floor(frac) : frac;
-	vec3 g = clamp(fw, 0.0, 1.0) * vec3(maxIdx);
+	vec3 g = clamp(frac, 0.0, 1.0) * vec3(maxIdx);
 	ivec3 i0 = ivec3(floor(g));
 	vec3 f = g - vec3(i0);
 	i0 = clamp(i0, ivec3(0), maxIdx);
@@ -77,15 +80,35 @@ float sampleField(vec3 frac)
 	return mix(v0, v1, f.z);
 }
 
+// Grid-fraction coordinate of a structure-cell-fraction point: folded into the
+// unit cell when the boundary reaches past it (periodic images), then mapped
+// through the cell -> grid transform.
+vec3 fieldFracOfCell(vec3 cell)
+{
+	vec3 cw = uFieldWrap ? cell - floor(cell) : cell;
+	return (uFieldCellToFrac * vec4(cw, 1.0)).xyz;
+}
+
+// Field value at a structure-cell-fraction point. Outside the grid's own cell
+// (the gap a supercell leaves around a non-duplicated field) there is no
+// field: 0, the same "nothing drawn" the raster copies show there.
+float sampleFieldCell(vec3 cell)
+{
+	vec3 frac = fieldFracOfCell(cell);
+	if (any(lessThan(frac, vec3(-1e-4))) || any(greaterThan(frac, vec3(1.0 + 1e-4)))) return 0.0;
+	return sampleField(frac);
+}
+
 // Ray-march the implicit isosurface. Returns true and fills outT (world-valid
 // distance along rayDirection), outNormal (world, faces the ray) and outColor
 // (pos/neg lobe colour) on the first crossing before bestT.
 bool intersectField(vec3 ro, vec3 rd, float bestT, out float outT, out vec3 outNormal, out vec3 outColor)
 {
-	// into fractional cube space; direction NOT renormalized so t stays
-	// world-valid (same trick the cylinders use)
-	vec3 fo = (uFieldWorldToFrac * vec4(ro, 1.0)).xyz;
-	vec3 fd = (uFieldWorldToFrac * vec4(rd, 0.0)).xyz;
+	// into the structure cell's fractional space (the boundary's space);
+	// direction NOT renormalized so t stays world-valid (same trick the
+	// cylinders use)
+	vec3 fo = (uFieldWorldToCell * vec4(ro, 1.0)).xyz;
+	vec3 fd = (uFieldWorldToCell * vec4(rd, 0.0)).xyz;
 
 	// slab-test the display-boundary box (the unit cube [0,1]^3 by default)
 	vec3 invD = 1.0 / fd;
@@ -103,13 +126,12 @@ bool intersectField(vec3 ro, vec3 rd, float bestT, out float outT, out vec3 outN
 	// Step count follows the grid resolution AND how many cells the display
 	// boundary spans, so a widened boundary is marched as finely as one cell
 	// (still capped by the loop bound below).
-	vec3 span = uFieldBoundsMax - uFieldBoundsMin;
-	float cells = max(max(max(span.x, span.y), span.z), 1.0);
+	float cells = max(uFieldSpanCells, 1.0);
 	int steps = int(clamp(1.5 * float(max(max(uFieldDims.x, uFieldDims.y), uFieldDims.z)) * cells, 64.0, 384.0));
 	float dt = (tFar - tNear) / float(steps);
 
 	float tPrev = tNear;
-	float fPrev = sampleField(fo + fd * tPrev);
+	float fPrev = sampleFieldCell(fo + fd * tPrev);
 	bool found = false;
 	float thr = uFieldIso;
 	vec3 lobeColor = uFieldIso >= 0.0 ? uFieldPosColor : uFieldNegColor;
@@ -118,7 +140,7 @@ bool intersectField(vec3 ro, vec3 rd, float bestT, out float outT, out vec3 outN
 	{
 		if (s > steps) break;
 		float tc = min(tNear + dt * float(s), tFar);
-		float fc = sampleField(fo + fd * tc);
+		float fc = sampleFieldCell(fo + fd * tc);
 		if (uFieldAbsMode)
 		{
 			if ((fPrev - A) * (fc - A) < 0.0) { thr = A; lobeColor = uFieldPosColor; found = true; }
@@ -136,7 +158,7 @@ bool intersectField(vec3 ro, vec3 rd, float bestT, out float outT, out vec3 outN
 			for (int b = 0; b < 8; b++)
 			{
 				float tm = 0.5 * (ta + tb);
-				float fm = sampleField(fo + fd * tm) - thr;
+				float fm = sampleFieldCell(fo + fd * tm) - thr;
 				if (fa * fm <= 0.0) { tb = tm; } else { ta = tm; fa = fm; }
 			}
 			outT = 0.5 * (ta + tb);
@@ -150,11 +172,11 @@ bool intersectField(vec3 ro, vec3 rd, float bestT, out float outT, out vec3 outN
 
 	outColor = lobeColor;
 
-	// central-difference gradient (one voxel step per axis) in fractional
+	// central-difference gradient (one voxel step per axis) in GRID fractional
 	// space; the world normal is transpose(worldToFrac 3x3) * gradFrac
 	// (normals transform by the inverse-transpose of the model matrix, and
 	// fracToWorld = inverse(worldToFrac))
-	vec3 fh = fo + fd * outT;
+	vec3 fh = fieldFracOfCell(fo + fd * outT);
 	vec3 h = 1.0 / vec3(uFieldDims);
 	vec3 gradFrac = vec3(
 		sampleField(fh + vec3(h.x, 0.0, 0.0)) - sampleField(fh - vec3(h.x, 0.0, 0.0)),

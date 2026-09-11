@@ -273,6 +273,14 @@ export class SceneEncoder {
   fieldTexture = this._dummyFieldTexture;
   fieldEnabled = false;
   fieldWorldToFrac = new THREE.Matrix4();
+  // The STRUCTURE lattice's fractional space, in which the display boundary is
+  // expressed: world -> cell fractions, and cell fractions -> field grid
+  // fractions [0,1]^3. They differ from fieldWorldToFrac once a supercell is
+  // built after the field was loaded (the field keeps its original sub-cell).
+  fieldWorldToCell = new THREE.Matrix4();
+  fieldCellToFrac = new THREE.Matrix4();
+  // widest boundary span in FIELD-grid-cell units (march step budget)
+  fieldSpanCells = 1;
   fieldDims = [1, 1, 1];
   // The periodic display boundary in fractional field coordinates: the region
   // the ray march covers. [0,1] is the plain unit cell; wider values repeat
@@ -405,6 +413,7 @@ export class SceneEncoder {
       const fb = this._fieldBounds();
       parts.push('f', field.nx, field.ny, field.nz, field.isoValue,
         field.useAbsoluteIsoValue ? 1 : 0, fb.join(','),
+        String(fileBrowser.selectedStructure?.lattice?.flat?.() ?? ''),
         iso.meshes?.positive?.material?.color?.getHexString(),
         iso.meshes?.negative?.material?.color?.getHexString(),
         iso.meshes?.positive?.material?.opacity,
@@ -1396,15 +1405,40 @@ export class SceneEncoder {
       0, 0, 0, 1);
     _m.scale(_scale.set(field.nx, field.ny, field.nz));
     this.fieldWorldToFrac.copy(_m).invert();
-    this._fieldForward = _m.clone(); // frac [0,1]^3 -> world (scene-bounds corners)
 
-    // The display boundary, in the same fractional space: the tracer marches
-    // the widened box and wraps the sample coordinate where the raster
-    // pipelines translate a copy of the mesh and clip it.
+    // The display boundary is in the STRUCTURE lattice's fractional space. The
+    // tracer marches that box and wraps the sample coordinate into the unit
+    // cell, then maps the cell point into the field grid — where the raster
+    // pipelines translate a copy of the mesh by lattice vectors and clip it.
+    // After a supercell the grid covers only part of the cell, and the gaps
+    // repeat with the cell exactly like the raster copies' do.
+    const structure = fileBrowser.selectedStructure;
+    const lat = structure?.lattice;
+    const hasLattice = Array.isArray(lat) && lat.length === 3
+      && lat.every((row) => Array.isArray(row) && row.length === 3 && row.every(Number.isFinite));
+    const cellToWorld = hasLattice
+      ? new THREE.Matrix4().set(
+        lat[0][0], lat[1][0], lat[2][0], 0,
+        lat[0][1], lat[1][1], lat[2][1], 0,
+        lat[0][2], lat[1][2], lat[2][2], 0,
+        0, 0, 0, 1)
+      : _m.clone(); // no lattice: the cell IS the field grid cell
+    this.fieldWorldToCell.copy(cellToWorld).invert();
+    this.fieldCellToFrac.multiplyMatrices(this.fieldWorldToFrac, cellToWorld);
+    this._fieldForward = cellToWorld; // cell fractions -> world (scene-bounds corners)
+
     const [bxLo, bxHi, byLo, byHi, bzLo, bzHi] = this._fieldBounds();
     this.fieldBoundsMin.set(bxLo, byLo, bzLo);
     this.fieldBoundsMax.set(bxHi, byHi, bzHi);
     this.fieldWrap = bxLo < 0 || bxHi > 1 || byLo < 0 || byHi > 1 || bzLo < 0 || bzHi > 1;
+    // Step budget: the span in field-grid cells, so a supercell (structure
+    // cell = several grid cells) is marched as finely per grid cell as before.
+    const gridLen = (k) => Math.hypot(_m.elements[4 * k], _m.elements[4 * k + 1], _m.elements[4 * k + 2]);
+    const cellLen = (k) => Math.hypot(cellToWorld.elements[4 * k], cellToWorld.elements[4 * k + 1],
+      cellToWorld.elements[4 * k + 2]);
+    const spans = [bxHi - bxLo, byHi - byLo, bzHi - bzLo];
+    this.fieldSpanCells = Math.max(1, ...spans.map((span, k) =>
+      span * (gridLen(k) > 0 ? cellLen(k) / gridLen(k) : 1)));
 
     this.fieldIso = Number.isFinite(field.isoValue) ? field.isoValue : 0;
     this.fieldAbsMode = !!field.useAbsoluteIsoValue;
@@ -1418,7 +1452,6 @@ export class SceneEncoder {
     // still glows, but it has no bounding-sphere primitive to add to the NEE
     // _emissiveList, so it lights via the PT non-listed diffuse-arrival
     // fallback only (hasEmissive keeps shadow-any-hit off so it isn't occluded).
-    const structure = fileBrowser.selectedStructure;
     let fm = structure?.fieldMaterial;
     if (fm && fm.type === 'glass') {
       if (!this._fieldGlassWarned) {
