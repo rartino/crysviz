@@ -22,6 +22,7 @@ async function copyViaPopup(page, option) {
     select.dispatchEvent(new Event('change'));
     const confirmBtn = [...popup.querySelectorAll('button')].find((b) => b.textContent === 'Copy');
     confirmBtn.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     const rowsAfter = document.querySelectorAll('#objectTable tbody tr');
     const selected = document.querySelector('#objectTable tbody tr.selected');

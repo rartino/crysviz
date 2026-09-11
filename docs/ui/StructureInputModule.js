@@ -5,6 +5,8 @@ import { FileSource } from '../io/FileSource.js';
 const tableBody = document.querySelector("#objectTable tbody");
 import {fileBrowser,structureShip} from '../state/store.js';
 import {createRow,selectLastAddedRow} from './FileBrowswerPanel.js';
+import { restoreAtomColors } from '../utils/ColorModule.js';
+import { restoreFocusRegions } from '../render/FocusRegionModule.js';
 import {
   transpose3x3,
   invert3x3,
@@ -32,19 +34,19 @@ export {
 
 
 
-export  function parsePOSCAR(content, fileName) {
+export  function parsePOSCAR(content, fileName, options = undefined) {
    console.log(content)
   const structure = readPOSCAR(content, fileName);
-  return initializeWithPOSCAR(structure, fileName);
+  return initializeWithPOSCAR(structure, fileName, options);
 }
 
-export function initializeWithPOSCAR(structure, fileName) {
+export function initializeWithPOSCAR(structure, fileName, options = undefined) {
   const container = new StructureContainer({
     fileName: fileName,
     structures: [structure],
   });
 
-  return initializeUIOnLoad(container);
+  return initializeUIOnLoad(container, options);
 }
 
 
@@ -60,7 +62,38 @@ export function initializeWithPOSCAR(structure, fileName) {
 
 
 
-export function initializeUIOnLoad(structureContainer) {
+export function isLikelyCIFContent(content) {
+  if (!content || typeof content !== 'string') return false;
+  const trimmed = content.trim();
+  if (!trimmed) return false;
+  if (/^\s*data_/i.test(trimmed)) return true;
+  if (/_cell_(length|angle)_[abc]/i.test(trimmed)) return true;
+  if (/_symmetry_space_group_name_h-m/i.test(trimmed)) return true;
+  return false;
+}
+
+export function isLikelyOUTCARContent(content) {
+  if (!content || typeof content !== 'string') return false;
+  const trimmed = content.trim();
+  if (!trimmed) return false;
+  if (/Startparameter/i.test(trimmed)) return true;
+  if (/Iteration:/i.test(trimmed)) return true;
+  return false;
+}
+
+/**
+ * Register a loaded container with the file browser and select it — every
+ * load path funnels through here.
+ * @param {any} structureContainer
+ * @param {{ restoreStoredPrefs?: boolean }} [options] restoreStoredPrefs
+ *   (default true) re-applies the per-structure preferences saved for this
+ *   same file in an earlier session — per-atom user colours
+ *   (utils/ColorModule.js) and focus regions (render/FocusRegionModule.js),
+ *   both stored by structure content in state/structurePrefs.js. A share-URL
+ *   / .crysviz load passes false: that state is a complete snapshot and must
+ *   not have stored preferences mixed in underneath it.
+ */
+export function initializeUIOnLoad(structureContainer, { restoreStoredPrefs = true } = {}) {
   console.log(structureContainer);
   const fileName = structureContainer.fileName;
   const structures = structureContainer.structures;
@@ -71,8 +104,16 @@ export function initializeUIOnLoad(structureContainer) {
   tableBody.appendChild(row);
   fileBrowser.fileData.push({ idx: -1, name: fileName, traj, step });
 
+  // Colours go on BEFORE the row is selected (and rendered) below, so the
+  // first rebuild already paints them.
+  if (restoreStoredPrefs) restoreAtomColors(structureContainer);
+
   structureShip.container.push(structureContainer);
   selectLastAddedRow();
+
+  // Focus regions live on the displayed frame, so they go on once it exists;
+  // restoreFocusRegions repaints the per-instance opacity itself (cheap).
+  if (restoreStoredPrefs) restoreFocusRegions(structureContainer, fileBrowser.selectedStructure);
   return structureContainer;
 }
 

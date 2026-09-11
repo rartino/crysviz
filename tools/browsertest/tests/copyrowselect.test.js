@@ -27,6 +27,7 @@ const H = require('../harness');
     const rowCountBefore = rows.length;
     const copyIcon = middleRow.querySelector('.ftd.icon.copy');
     copyIcon.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true, metaKey: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     const rowsAfter = document.querySelectorAll('#objectTable tbody tr');
     const selected = document.querySelector('#objectTable tbody tr.selected');

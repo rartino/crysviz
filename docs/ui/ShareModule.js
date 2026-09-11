@@ -279,6 +279,7 @@ export function captureState({ includeFrames = false, includeFields = false } = 
       bondLengths: { ...general.bondLengths },
       bondVisibility: { ...general.bondVisibility },
       atomVisibility: { ...general.atomVisibility },
+      focusRegions: nonEmptyDeepCopy(structure.focusRegions),
       bondCutImmunity: { ...general.bondCutImmunity },
       // Force / spin arrow display (issue #53). Only the values ForceModule/
       // SpinModule read to draw the arrows are persisted — not panel widget
@@ -1261,13 +1262,13 @@ export function applySharedState(state, fileName = 'shared.vasp') {
       trajectoryContainer = structures.length > 1
         ? TrajectoryContainer.fromStructures(fileName, structures)
         : new StructureContainer({ fileName, structures });
-      initializeUIOnLoad(trajectoryContainer);
+      initializeUIOnLoad(trajectoryContainer, { restoreStoredPrefs: false });
       // Land on the frame the user was viewing before colors/fields are applied,
       // so `structure` below is that frame (also draws its arrows via the gated
       // updateForces/updateSpins in updateStructureFromFrame).
       showTrajectoryFrame(selectedFrameIndex, trajectoryContainer);
     } else {
-      parsePOSCAR(buildPOSCAR({ structure: viewed }), fileName);
+      parsePOSCAR(buildPOSCAR({ structure: viewed }), fileName, { restoreStoredPrefs: false });
     }
   } catch (e) {
     console.error('Failed to load structure from state:', e);
@@ -1276,6 +1277,10 @@ export function applySharedState(state, fileName = 'shared.vasp') {
 
   const structure = fileBrowser.selectedStructure;
   if (!structure) return false;
+
+  if (Array.isArray(state.display?.focusRegions)) {
+    structure.focusRegions = JSON.parse(JSON.stringify(state.display.focusRegions));
+  }
 
   // Single-frame: buildPOSCAR() groups atoms by element, so restore the saved
   // atom ordering before applying any per-atom state that relies on stable
