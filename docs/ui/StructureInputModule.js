@@ -6,6 +6,7 @@ const tableBody = document.querySelector("#objectTable tbody");
 import {fileBrowser,structureShip} from '../state/store.js';
 import {createRow,selectLastAddedRow} from './FileBrowswerPanel.js';
 import { restoreAtomColors } from '../utils/ColorModule.js';
+import { restoreFocusRegions } from '../render/FocusRegionModule.js';
 import {
   transpose3x3,
   invert3x3,
@@ -84,13 +85,15 @@ export function isLikelyOUTCARContent(content) {
  * Register a loaded container with the file browser and select it — every
  * load path funnels through here.
  * @param {any} structureContainer
- * @param {{ restoreStoredColors?: boolean }} [options] restoreStoredColors
- *   (default true) re-applies the per-atom user colours saved for this same
- *   file in an earlier session (utils/ColorModule.js). A share-URL / .crysviz
- *   load passes false: that state is a complete snapshot of the colours and
- *   must not have stored overrides mixed in underneath it.
+ * @param {{ restoreStoredPrefs?: boolean }} [options] restoreStoredPrefs
+ *   (default true) re-applies the per-structure preferences saved for this
+ *   same file in an earlier session — per-atom user colours
+ *   (utils/ColorModule.js) and focus regions (render/FocusRegionModule.js),
+ *   both stored by structure content in state/structurePrefs.js. A share-URL
+ *   / .crysviz load passes false: that state is a complete snapshot and must
+ *   not have stored preferences mixed in underneath it.
  */
-export function initializeUIOnLoad(structureContainer, { restoreStoredColors = true } = {}) {
+export function initializeUIOnLoad(structureContainer, { restoreStoredPrefs = true } = {}) {
   console.log(structureContainer);
   const fileName = structureContainer.fileName;
   const structures = structureContainer.structures;
@@ -101,12 +104,16 @@ export function initializeUIOnLoad(structureContainer, { restoreStoredColors = t
   tableBody.appendChild(row);
   fileBrowser.fileData.push({ idx: -1, name: fileName, traj, step });
 
-  // Before the row is selected (and rendered) below, so the first rebuild
-  // already paints the restored colours.
-  if (restoreStoredColors) restoreAtomColors(structureContainer);
+  // Colours go on BEFORE the row is selected (and rendered) below, so the
+  // first rebuild already paints them.
+  if (restoreStoredPrefs) restoreAtomColors(structureContainer);
 
   structureShip.container.push(structureContainer);
   selectLastAddedRow();
+
+  // Focus regions live on the displayed frame, so they go on once it exists;
+  // restoreFocusRegions repaints the per-instance opacity itself (cheap).
+  if (restoreStoredPrefs) restoreFocusRegions(structureContainer, fileBrowser.selectedStructure);
   return structureContainer;
 }
 

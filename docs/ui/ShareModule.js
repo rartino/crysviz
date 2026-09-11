@@ -1262,13 +1262,13 @@ export function applySharedState(state, fileName = 'shared.vasp') {
       trajectoryContainer = structures.length > 1
         ? TrajectoryContainer.fromStructures(fileName, structures)
         : new StructureContainer({ fileName, structures });
-      initializeUIOnLoad(trajectoryContainer);
+      initializeUIOnLoad(trajectoryContainer, { restoreStoredPrefs: false });
       // Land on the frame the user was viewing before colors/fields are applied,
       // so `structure` below is that frame (also draws its arrows via the gated
       // updateForces/updateSpins in updateStructureFromFrame).
       showTrajectoryFrame(selectedFrameIndex, trajectoryContainer);
     } else {
-      parsePOSCAR(buildPOSCAR({ structure: viewed }), fileName, { restoreStoredColors: false });
+      parsePOSCAR(buildPOSCAR({ structure: viewed }), fileName, { restoreStoredPrefs: false });
     }
   } catch (e) {
     console.error('Failed to load structure from state:', e);

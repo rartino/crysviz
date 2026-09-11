@@ -16,6 +16,10 @@ Regions repeat with the lattice: distances are measured to the nearest
 periodic image of the center, so widening the active cell boundary shows the
 same focus around every periodic copy of the selected atoms.
 
+Regions are remembered per structure: open the same file again after a
+browser reload and they come back (see the Settings window's "Clear local
+data" to forget them).
+
 Regions are non-destructive: their opacity is combined with existing atom
 opacity without changing it. Overlapping regions keep the most visible result.
 Bonds, hydrogen bonds, forces, spins, charge badges, polyhedra, and the

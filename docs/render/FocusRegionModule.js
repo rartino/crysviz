@@ -4,6 +4,7 @@
 
 import * as THREE from '../external/three/three.module.js';
 import { fileBrowser, groups, general } from '../state/store.js';
+import { readStructurePrefs, scheduleStructurePrefSave } from '../state/structurePrefs.js';
 import { cartToFrac, fracToCart, invert3x3, transpose3x3 } from '../math/index.js';
 import { applyTransparency } from '../utils/TransparencyPolicy.js';
 import { requestRender } from './AnimateModule.js';
@@ -288,6 +289,37 @@ export function createFocusRegion(centerAtoms, structure = fileBrowser.selectedS
   return region;
 }
 
+/** The regions as plain JSON (what ShareModule's captureState stores too);
+ *  [] when there are none, which drops the stored field. */
+function serializeFocusRegions(structure) {
+  const regions = structure?.focusRegions;
+  return Array.isArray(regions) && regions.length ? JSON.parse(JSON.stringify(regions)) : [];
+}
+
+/**
+ * Re-apply the focus regions saved for this container in an earlier session
+ * to the frame now on screen. Regions live on the displayed Structure (not in
+ * a trajectory's per-frame records), so unlike the atom colours this runs
+ * AFTER the first frame exists — from ui/StructureInputModule.js's
+ * initializeUIOnLoad, right after the row is selected — and repaints the
+ * per-instance opacity itself. `structure` must belong to `container` (an
+ * asynchronously materialised first frame isn't selected yet: nothing is
+ * applied then). Returns the number of regions applied.
+ * @param {any} container a StructureContainer
+ * @param {any} [structure] the displayed frame
+ * @returns {number}
+ */
+export function restoreFocusRegions(container, structure = fileBrowser.selectedStructure) {
+  const regions = readStructurePrefs(container)?.focusRegions;
+  if (!Array.isArray(regions) || !regions.length || !structure) return 0;
+  const owns = typeof container?.ownsStructure === 'function'
+    ? container.ownsStructure(structure) : !!container?.structures?.includes(structure);
+  if (!owns) return 0;
+  structure.focusRegions = JSON.parse(JSON.stringify(regions));
+  applyFocusRegions(structure);
+  return structure.focusRegions.length;
+}
+
 export function removeFocusRegion(id, structure = fileBrowser.selectedStructure) {
   if (!structure?.focusRegions) return;
   structure.focusRegions = structure.focusRegions.filter((region) => region.id !== id);
@@ -300,6 +332,13 @@ export function clearFocusRegions(structure = fileBrowser.selectedStructure) {
 }
 
 export function applyFocusRegions(structure = fileBrowser.selectedStructure) {
+  // Every focus-region edit (panel sliders/toggles, create/remove/clear,
+  // centre edits) ends here, so this is the one place the regions get
+  // persisted for the next session (state/structurePrefs.js; debounced —
+  // sliders fire per pointer move and fast-frame playback calls this per
+  // frame). Stored by structure content, so the same file re-opened after a
+  // reload gets its regions back (restoreFocusRegions below).
+  if (structure) scheduleStructurePrefSave(structure, 'focusRegions', () => serializeFocusRegions(structure));
   const mesh = groups.atomsMesh;
   const wrapped = structure?.periodic?.visibleWrapped;
   const opacityAttr = mesh?.geometry?.attributes?.instanceOpacity;
