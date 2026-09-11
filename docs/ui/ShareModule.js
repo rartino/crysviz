@@ -279,6 +279,7 @@ export function captureState({ includeFrames = false, includeFields = false } = 
       bondLengths: { ...general.bondLengths },
       bondVisibility: { ...general.bondVisibility },
       atomVisibility: { ...general.atomVisibility },
+      focusRegions: nonEmptyDeepCopy(structure.focusRegions),
       bondCutImmunity: { ...general.bondCutImmunity },
       // Force / spin arrow display (issue #53). Only the values ForceModule/
       // SpinModule read to draw the arrows are persisted — not panel widget
@@ -1276,6 +1277,10 @@ export function applySharedState(state, fileName = 'shared.vasp') {
 
   const structure = fileBrowser.selectedStructure;
   if (!structure) return false;
+
+  if (Array.isArray(state.display?.focusRegions)) {
+    structure.focusRegions = JSON.parse(JSON.stringify(state.display.focusRegions));
+  }
 
   // Single-frame: buildPOSCAR() groups atoms by element, so restore the saved
   // atom ordering before applying any per-atom state that relies on stable
