@@ -20,7 +20,7 @@ const H = require('../harness');
     JSON.stringify(before));
 
   // Ctrl/Cmd-click the COPY icon on the "middle" row, not the last one.
-  const result = await page.evaluate(() => {
+  const result = await page.evaluate(async () => {
     const rows = document.querySelectorAll('#objectTable tbody tr');
     const middleRow = [...rows].find((r) => r.querySelector('.name-inner')?.textContent === 'middle');
     const middleIndex = [...rows].indexOf(middleRow);

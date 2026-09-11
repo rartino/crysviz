@@ -6,7 +6,7 @@
 const H = require('../harness');
 
 async function copyViaPopup(page, option) {
-  return page.evaluate((option) => {
+  return page.evaluate(async (option) => {
     const rows = document.querySelectorAll('#objectTable tbody tr');
     const middleRow = [...rows].find((r) => r.querySelector('.name-inner')?.textContent === 'middle');
     const middleIndex = [...rows].indexOf(middleRow);

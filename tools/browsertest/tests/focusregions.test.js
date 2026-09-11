@@ -3,7 +3,8 @@
 // semantics, not implementation details or screenshots:
 // - the inner sphere and outer environment classify in Cartesian Å;
 // - overlapping regions preserve anything important to either region;
-// - centers/exceptions remain visible;
+// - only excluded atoms are exempt; the atoms a region was created from
+//   follow the rule like every other atom;
 // - focus alpha composes with, and never overwrites, authored atom alpha;
 // - the radial gradient ramps linearly across the outer share of the inner sphere;
 // - polyhedra follow either their atoms' mean or the rule at their centroid;
@@ -52,11 +53,11 @@ const H = require('../harness');
   });
   H.check('inner sphere and all outer distances use their intended opacity',
     math.inner === 0.8 && math.outerNear === 0.2 && math.outerFar === 0.2, JSON.stringify(math));
-  H.check('focus atoms and explicit exceptions remain unchanged',
-    math.center === 1 && math.excluded === 1, JSON.stringify(math));
+  H.check('focus atoms follow the rule while explicit exceptions remain unchanged',
+    math.center === 0.2 && math.excluded === 1, JSON.stringify(math));
   H.check('overlapping regions choose maximum visibility', math.overlap === 0.8, JSON.stringify(math));
-  H.check('adding another region cannot dim an earlier focus atom',
-    math.earlierFocus === 1, JSON.stringify(math));
+  H.check('an earlier focus atom keeps its own region\'s inner opacity when another region is added',
+    math.earlierFocus === 0.8, JSON.stringify(math));
   H.check('disabling the inner region applies the outer rule near a molecule',
     math.noInner === 0.2, JSON.stringify(math));
   const near = (a, b) => Math.abs(a - b) < 1e-9;
@@ -67,9 +68,9 @@ const H = require('../harness');
     near(math.gradientFull, 0.5) && near(math.gradientNone, 0.8), JSON.stringify(math));
   H.check('without an inner region the gradient has no effect',
     near(math.gradientNoInner, 0.2), JSON.stringify(math));
-  H.check('focus atoms stay exempt from the gradient', math.gradientCenter === 1, JSON.stringify(math));
+  H.check('focus atoms follow the gradient like any other atom', near(math.gradientCenter, 0.5), JSON.stringify(math));
   H.check('polyhedra average their atoms or take the rule at their centroid',
-    near(math.polyAverage, 0.5) && near(math.polyPosition, 0.8) && math.polyFocusCenter === 1
+    near(math.polyAverage, 0.5) && near(math.polyPosition, 0.8) && near(math.polyFocusCenter, 0.6)
       && math.polyNoRegions === 1, JSON.stringify(math));
 
   const contcar = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'tests', 'wav_dat', 'CONTCAR'), 'utf8');
@@ -123,8 +124,8 @@ const H = require('../harness');
     document.body.appendChild(spinVis);
     updateForces(); updateSpins();
     const farSource = farIndex >= 0 ? wrapped.srcIndex[farIndex] : -1;
-    const forceArrow = groups.forcesInstanceBySrcIndex?.get(farSource);
-    const spinArrow = groups.spinsInstanceBySrcIndex?.get(farSource);
+    const forceArrow = groups.forcesInstancesBySrcIndex?.get(farSource)?.[0];
+    const spinArrow = groups.spinsInstancesBySrcIndex?.get(farSource)?.[0];
     return {
       atomCount: structure.atoms.length,
       regionCount: structure.focusRegions.length,
@@ -164,9 +165,11 @@ const H = require('../harness');
       && result.actualCenterFrac.every((value, axis) => Math.abs(value - result.adjustedCenterFrac[axis]) < 1e-9)
       && result.centerOffsetFrac.every((value, axis) => Math.abs(value - (axis + 1) * 0.01) < 1e-9),
     JSON.stringify(result));
-  H.check('focus keeps the center visible without overwriting authored alpha',
+  // The shifted center leaves atom 0 outside the 0.1 Å inner sphere, so the
+  // outer opacity (0.1) composes with its authored alpha (0.6) -> 0.06.
+  H.check('focus composes with authored alpha instead of overwriting it',
     Math.abs(result.authoredOpacity - 0.6) < 1e-6
-      && Math.abs(result.centerDisplayOpacity - 0.6) < 1e-5, JSON.stringify(result));
+      && Math.abs(result.centerDisplayOpacity - 0.06) < 1e-5, JSON.stringify(result));
   H.check('atoms outside every region are aggressively reduced',
     result.farIndex >= 0 && result.farDisplayOpacity <= 0.1001, JSON.stringify(result));
   H.check('force and spin arrows follow their atom focus opacity',
