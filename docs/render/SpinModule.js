@@ -2,6 +2,7 @@ import * as THREE from '../external/three/three.module.js';
 import { app, fileBrowser, groups, general } from '../state/store.js';
 import { getColorFromMap, getElementDefaultColor } from '../defaults/color_texture_defaults.js';
 import { createArrowMaterial, addArrowEmissiveAttributes } from './ArrowMaterial.js';
+import { applyFocusToArrows } from './FocusRegionModule.js';
 
 
 
@@ -401,4 +402,8 @@ export function updateSpins(spinFactor = 1.0, useManualSpins = false, manualSpin
   groups.spinShaftMesh.boundingBox = null;
   groups.spinTipMesh.boundingSphere = null;
   groups.spinTipMesh.boundingBox = null;
+
+  // Fresh arrows: re-derive their focus-region opacity (the instanceOpacity
+  // attribute is reset to 1 on every mesh rebuild).
+  applyFocusToArrows(structure, 'spins');
 }

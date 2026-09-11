@@ -84,7 +84,12 @@ export function applyIsosurfaceMaterialSettings(isosurface, settings = {}) {
         if (opacity !== undefined) {
             material.opacity = clampOpacity(opacity);
         }
-        applyTransparency(material, { kind: 'isosurface', opacity: material.opacity, mesh });
+        // Keep a focus-region vertex fade (render/FocusRegionModule.js
+        // applyFocusToField) in the blended pass across an opacity edit.
+        applyTransparency(material, {
+            kind: 'isosurface', opacity: material.opacity,
+            needsTransparency: !!material.userData?.transparencySpec?.needsTransparency, mesh,
+        });
     };
 
     applyToMesh(isosurface.meshes.positive, positiveColor);

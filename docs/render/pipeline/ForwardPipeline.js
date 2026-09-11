@@ -76,6 +76,10 @@ export class ForwardPipeline {
         material.transparent = !!spec.needsTransparency;
         material.depthWrite = true;
         break;
+      case 'arrows':
+        material.transparent = !!spec.needsTransparency;
+        material.depthWrite = !spec.needsTransparency;
+        break;
       case 'compAtoms': {
         // Comparison ghost atoms: uniform opacity only.
         const isTransparent = opacity !== 1;
@@ -119,7 +123,10 @@ export class ForwardPipeline {
         // (model/Isosurface.js): below alpha 1 the OIT pipelines handle it,
         // and at alpha 1 the depth buffer resolves it exactly — in every
         // pipeline, forward included.
-        const isTransparent = opacity < 1;
+        // needsTransparency: focus regions fade vertices below the uniform
+        // material opacity via a vertex alpha (FocusRegionModule.applyFocusToField),
+        // which only shows in the blended pass.
+        const isTransparent = opacity < 1 || !!spec.needsTransparency;
         material.transparent = isTransparent;
         material.depthWrite = !isTransparent;
         // Blended: render after opaque structures to reduce blending

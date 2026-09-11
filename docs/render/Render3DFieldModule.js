@@ -10,6 +10,7 @@ import { app, groups, fileBrowser, general, structureShip } from '../state/store
 import { normalizePeriodicBounds } from './LatticeModule.js';
 import { readCHGCAR } from "../io/ReadChgcarModule.js";
 import { readCubeFile } from "../io/ReadCubeModule.js";
+import { applyFocusToField } from './FocusRegionModule.js';
 import { readWAVECAR } from "../io/ReadWavecarModule.js";
 import { Isosurface, FieldCatalog, FieldContainer, defaultIsoValue } from "../model/index.js";
 import { choiceDialog, noticeDialog } from "../ui/ConfirmModal.js";
@@ -259,6 +260,8 @@ export function updateField(iso = null) {
   //  Add to scene if not already there
   //--------------------------------------------------------
   app.scene.add(groups.isosurfaceGroup);
+  // Fresh geometry: re-derive the per-vertex focus-region alpha for it.
+  applyFocusToField();
 }
 
 /**
