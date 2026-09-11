@@ -4,7 +4,7 @@
 
 import * as THREE from '../external/three/three.module.js';
 import { fileBrowser, groups, general } from '../state/store.js';
-import { cartToFrac, fracToCart } from '../math/index.js';
+import { cartToFrac, fracToCart, invert3x3, transpose3x3 } from '../math/index.js';
 import { applyTransparency } from '../utils/TransparencyPolicy.js';
 import { requestRender } from './AnimateModule.js';
 import { syncArrowTransparency } from './ArrowMaterial.js';
@@ -38,17 +38,77 @@ function clamp01(value) {
   return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0;
 }
 
-/** Visibility proposed by one region for a Cartesian point. */
-export function focusOpacityAt(point, region, sourceIndex = -1) {
+// ---- Lattice-periodic evaluation -------------------------------------------
+// A focus region repeats with the lattice: the rule is evaluated at the
+// minimum-image distance from the center, so every periodic image of the
+// focus atom the display boundary reveals is the center of its own identical
+// sphere, and all drawn images of any atom agree on one focus opacity. That
+// agreement is what lets the field's boundary copies share one geometry and
+// the arrows key on source atoms.
+
+/** Real-space lattice plus the Cartesian->fractional inverse the distance
+ * needs, or null for a structure without a usable cell (then plain distance). */
+export function periodicBasis(lattice) {
+  if (!Array.isArray(lattice) || lattice.length !== 3) return null;
+  try {
+    return { lattice, inverse: invert3x3(transpose3x3(lattice)) };
+  } catch {
+    return null;
+  }
+}
+
+/** Minimum-image distance between two Cartesian points. The fractional
+ * difference is wrapped to [-0.5, 0.5), then the 8 images reached by shifting
+ * each component by a whole cell toward the origin are compared: for a
+ * reduced cell the nearest image is always among them, which the wrapped
+ * vector alone does not guarantee for skewed (e.g. hexagonal) cells. */
+export function minimumImageDistance(point, center, basis) {
+  const dx = point[0] - center[0];
+  const dy = point[1] - center[1];
+  const dz = point[2] - center[2];
+  if (!basis) return Math.hypot(dx, dy, dz);
+  const inv = basis.inverse;
+  const L = basis.lattice;
+  let fx = inv[0][0] * dx + inv[0][1] * dy + inv[0][2] * dz;
+  let fy = inv[1][0] * dx + inv[1][1] * dy + inv[1][2] * dz;
+  let fz = inv[2][0] * dx + inv[2][1] * dy + inv[2][2] * dz;
+  fx -= Math.round(fx);
+  fy -= Math.round(fy);
+  fz -= Math.round(fz);
+  const ax = fx > 0 ? fx - 1 : fx + 1;
+  const ay = fy > 0 ? fy - 1 : fy + 1;
+  const az = fz > 0 ? fz - 1 : fz + 1;
+  let best = Infinity;
+  for (let i = 0; i < 8; i++) {
+    const u = (i & 1) ? ax : fx;
+    const v = (i & 2) ? ay : fy;
+    const w = (i & 4) ? az : fz;
+    const cx = u * L[0][0] + v * L[1][0] + w * L[2][0];
+    const cy = u * L[0][1] + v * L[1][1] + w * L[2][1];
+    const cz = u * L[0][2] + v * L[1][2] + w * L[2][2];
+    const d2 = cx * cx + cy * cy + cz * cz;
+    if (d2 < best) best = d2;
+  }
+  return Math.sqrt(best);
+}
+
+/** Distance from a Cartesian point to the nearest periodic image of a region
+ * center (plain distance for a structure without a cell). */
+export function focusDistanceTo(point, region, structure = fileBrowser.selectedStructure) {
+  if (!region?.center?.length) return Infinity;
+  return minimumImageDistance(point, region.center, periodicBasis(structure?.lattice));
+}
+
+/** Visibility proposed by one region for a Cartesian point. `basis` (see
+ * periodicBasis) makes the rule lattice-periodic; null evaluates it in open
+ * space. */
+export function focusOpacityAt(point, region, sourceIndex = -1, basis = null) {
   if (!region?.enabled || !region.center?.length) return 1;
   if (region.centerSourceIndices?.includes(sourceIndex)
       || region.excludedSourceIndices?.includes(sourceIndex)) return 1;
-  const dx = point[0] - region.center[0];
-  const dy = point[1] - region.center[1];
-  const dz = point[2] - region.center[2];
-  const distance = Math.hypot(dx, dy, dz);
   const outerOpacity = clamp01(region.outerOpacity);
   if (!region.innerEnabled) return outerOpacity;
+  const distance = minimumImageDistance(point, region.center, basis);
   const innerRadius = Math.max(0, Number(region.innerRadius) || 0);
   if (distance > innerRadius) return outerOpacity;
   const innerOpacity = clamp01(region.innerOpacity);
@@ -70,7 +130,7 @@ export function gradientStartRadius(region) {
 
 /** Multiple regions combine by maximum visibility: importance in one region
  * cannot be cancelled by another region. */
-export function combinedFocusOpacity(point, sourceIndex, regions) {
+export function combinedFocusOpacity(point, sourceIndex, regions, basis = null) {
   const enabled = (regions ?? []).filter((region) => region?.enabled && region.center?.length);
   if (!enabled.length) return 1;
   // Focus atoms are global exceptions. Without this explicit union, a newly
@@ -79,7 +139,7 @@ export function combinedFocusOpacity(point, sourceIndex, regions) {
   if (enabled.some((region) => region.centerSourceIndices?.includes(sourceIndex)
       || region.excludedSourceIndices?.includes(sourceIndex))) return 1;
   let opacity = 0;
-  for (const region of enabled) opacity = Math.max(opacity, focusOpacityAt(point, region, sourceIndex));
+  for (const region of enabled) opacity = Math.max(opacity, focusOpacityAt(point, region, sourceIndex, basis));
   return opacity;
 }
 
@@ -160,14 +220,14 @@ export function getFocusOpacityForInstance(instanceIndex, structure = fileBrowse
   const point = wrapped?.cart?.[instanceIndex];
   if (!point) return 1;
   return combinedFocusOpacity(point, wrapped.srcIndex?.[instanceIndex] ?? instanceIndex,
-    getFocusRegions(structure));
+    getFocusRegions(structure), periodicBasis(structure.lattice));
 }
 
 /** Focus opacity of one polyhedron (model/Polyhedron: Cartesian `vertices`,
  * `vertexSrcList`, optional `centerIndex`). Each region proposes a value by
  * its own polyhedraMode — the mean of its atoms' focus opacity, or the rule at
  * the polyhedron centroid — and regions combine by maximum, as for atoms. */
-export function focusOpacityForPolyhedron(poly, regions) {
+export function focusOpacityForPolyhedron(poly, regions, basis = null) {
   const enabled = (regions ?? []).filter((region) => region?.enabled && region.center?.length);
   const vertices = poly?.vertices ?? [];
   if (!enabled.length || !vertices.length) return 1;
@@ -186,10 +246,10 @@ export function focusOpacityForPolyhedron(poly, regions) {
   for (const region of enabled) {
     let proposal;
     if (region.polyhedraMode === 'position') {
-      proposal = focusOpacityAt(centroid, region, centerSource);
+      proposal = focusOpacityAt(centroid, region, centerSource, basis);
     } else {
       proposal = atoms.reduce((sum, atom) => sum
-        + (isException(atom.source) ? 1 : focusOpacityAt(atom.point, region, atom.source)), 0) / atoms.length;
+        + (isException(atom.source) ? 1 : focusOpacityAt(atom.point, region, atom.source, basis)), 0) / atoms.length;
     }
     opacity = Math.max(opacity, proposal);
   }
@@ -197,7 +257,7 @@ export function focusOpacityForPolyhedron(poly, regions) {
 }
 
 export function getFocusOpacityForPolyhedron(poly, structure = fileBrowser.selectedStructure) {
-  return focusOpacityForPolyhedron(poly, getFocusRegions(structure));
+  return focusOpacityForPolyhedron(poly, getFocusRegions(structure), periodicBasis(structure?.lattice));
 }
 
 export function createFocusRegion(centerAtoms, structure = fileBrowser.selectedStructure) {
@@ -305,6 +365,9 @@ export function applyFocusToField(structure = fileBrowser.selectedStructure) {
   if (!meshes) return;
   const regions = getFocusRegions(structure).filter((region) =>
     region?.enabled && region.center?.length);
+  // The rule is lattice-periodic, so the alpha written for the base surface is
+  // exactly right for the boundary copies that share its geometry too.
+  const basis = periodicBasis(structure?.lattice);
   iso.updateMatrixWorld?.(true);
   for (const mesh of [meshes.positive, meshes.negative]) {
     const geometry = mesh?.geometry;
@@ -337,7 +400,7 @@ export function applyFocusToField(structure = fileBrowser.selectedStructure) {
       _fieldPoint[1] = m[1] * x + m[5] * y + m[9] * z + m[13];
       _fieldPoint[2] = m[2] * x + m[6] * y + m[10] * z + m[14];
       let alpha = 0;
-      for (const region of regions) alpha = Math.max(alpha, focusOpacityAt(_fieldPoint, region, -1));
+      for (const region of regions) alpha = Math.max(alpha, focusOpacityAt(_fieldPoint, region, -1, basis));
       dst[i * 4] = 1;
       dst[i * 4 + 1] = 1;
       dst[i * 4 + 2] = 1;
@@ -357,24 +420,32 @@ export function applyFocusToField(structure = fileBrowser.selectedStructure) {
 
 export function applyFocusToArrows(structure = fileBrowser.selectedStructure, kind) {
   const prefix = kind === 'forces' ? 'forces' : 'spin';
-  const map = groups[`${kind}InstanceBySrcIndex`];
+  // arrow indices per source atom (SpinModule/ForceModule: one arrow per drawn
+  // atom image, so a LIST per atom)
+  const lists = groups[`${kind}InstancesBySrcIndex`];
   const shaft = groups[`${prefix}ShaftMesh`];
   const tip = groups[`${prefix}TipMesh`];
-  if (!map || !shaft || !tip) return;
-  const wrapped = structure.periodic?.visibleWrapped;
+  if (!lists || !shaft || !tip) return;
+  const shaftOpacity = shaft.geometry?.attributes?.instanceOpacity;
+  const tipOpacity = tip.geometry?.attributes?.instanceOpacity;
+  const wrapped = structure?.periodic?.visibleWrapped;
   const firstInstance = new Map();
   wrapped?.srcIndex?.forEach((src, index) => { if (!firstInstance.has(src)) firstInstance.set(src, index); });
   let transparent = false;
-  for (const [src, arrowIndex] of map) {
+  for (const [src, arrowIndices] of lists) {
+    // The rule is lattice-periodic, so every drawn image of an atom shares one
+    // focus opacity: any one atom instance stands for all of its arrows.
     const instance = firstInstance.get(src);
     const opacity = instance == null ? 1 : getFocusOpacityForInstance(instance, structure);
-    shaft.geometry.attributes.instanceOpacity?.setX(arrowIndex * 2, opacity);
-    shaft.geometry.attributes.instanceOpacity?.setX(arrowIndex * 2 + 1, opacity);
-    tip.geometry.attributes.instanceOpacity?.setX(arrowIndex, opacity);
+    for (const arrowIndex of arrowIndices) {
+      shaftOpacity?.setX(arrowIndex * 2, opacity);
+      shaftOpacity?.setX(arrowIndex * 2 + 1, opacity);
+      tipOpacity?.setX(arrowIndex, opacity);
+    }
     if (opacity < 0.999) transparent = true;
   }
-  if (shaft.geometry.attributes.instanceOpacity) shaft.geometry.attributes.instanceOpacity.needsUpdate = true;
-  if (tip.geometry.attributes.instanceOpacity) tip.geometry.attributes.instanceOpacity.needsUpdate = true;
+  if (shaftOpacity) shaftOpacity.needsUpdate = true;
+  if (tipOpacity) tipOpacity.needsUpdate = true;
   syncArrowTransparency(shaft, transparent);
   syncArrowTransparency(tip, transparent);
 }

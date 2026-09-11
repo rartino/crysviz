@@ -1,6 +1,6 @@
 import { fileBrowser } from '../state/store.js';
 import {
-  applyFocusRegions, createFocusRegion, getFocusRegions, gradientStartRadius,
+  applyFocusRegions, createFocusRegion, focusDistanceTo, getFocusRegions, gradientStartRadius,
   prepareFocusRegions, removeFocusRegion, resetFocusRegionCenter, setFocusRegionCenterFractional,
 } from '../render/index.js';
 import {
@@ -145,9 +145,8 @@ function renderRegionCard(region, index, rerender) {
     const instanceIds = [];
     wrapped?.cart?.forEach((point, instanceId) => {
       const sourceIndex = wrapped.srcIndex?.[instanceId] ?? instanceId;
-      const distance = Math.hypot(
-        point[0] - region.center[0], point[1] - region.center[1], point[2] - region.center[2],
-      );
+      // Same lattice-periodic distance the rule itself uses.
+      const distance = focusDistanceTo(point, region, structure);
       if (distance <= radius || exceptions.has(sourceIndex)) instanceIds.push(instanceId);
     });
     selectAtomsByInstances(instanceIds, { reason: 'focus-region', revealPanel: true });

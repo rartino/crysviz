@@ -57,7 +57,7 @@ export {
 export { applyFrameFast, BOND_TOPOLOGY_STRIDE, lastFastFrameBail } from './FastFrameModule.js';
 
 export {
-  DEFAULT_FOCUS_REGION, POLYHEDRA_FOCUS_MODES, focusOpacityAt, gradientStartRadius,
+  DEFAULT_FOCUS_REGION, POLYHEDRA_FOCUS_MODES, focusOpacityAt, focusDistanceTo, gradientStartRadius,
   combinedFocusOpacity, focusOpacityForPolyhedron, getFocusOpacityForPolyhedron, getFocusRegions,
   focusRegionsActive, getFocusOpacityForInstance, prepareFocusRegions, createFocusRegion,
   removeFocusRegion, clearFocusRegions, applyFocusRegions, setFocusRegionCenterFractional,
@@ -78,9 +78,9 @@ export {
 } from './PolyhedraModule.js';
 
 export {
-  updateField, setActiveField, toggleFieldVisibility, clearField, deleteField,
-  parseCHGCARFile, parseCubeFile, parseWavecarFile, revealFieldPanelForCurrentStructure,
-  suggestIsoValue,
+  updateField, applyFieldPeriodicBounds, setActiveField, toggleFieldVisibility, clearField,
+  deleteField, parseCHGCARFile, parseCubeFile, parseWavecarFile,
+  revealFieldPanelForCurrentStructure, suggestIsoValue,
 } from './Render3DFieldModule.js';
 
 export { removeSpins, updateSpins, deleteSpins, computeSpinColor } from './SpinModule.js';
