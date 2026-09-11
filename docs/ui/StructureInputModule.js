@@ -5,6 +5,8 @@ import { FileSource } from '../io/FileSource.js';
 const tableBody = document.querySelector("#objectTable tbody");
 import {fileBrowser,structureShip} from '../state/store.js';
 import {createRow,selectLastAddedRow} from './FileBrowswerPanel.js';
+import { restoreAtomColors } from '../utils/ColorModule.js';
+import { restoreFocusRegions } from '../render/FocusRegionModule.js';
 import {
   transpose3x3,
   invert3x3,
@@ -13,6 +15,12 @@ import {
   latticeFromCell,
   cartToFractional,
 } from '../math/index.js';
+import {
+  fetchAlexandriaStructure,
+  fetchOptimadeStructure,
+  isOptimadeStructureUrl,
+  normalizeAlexandriaId,
+} from '../io/OptimadeModule.js';
 
 export {
   transpose3x3,
@@ -26,19 +34,19 @@ export {
 
 
 
-export  function parsePOSCAR(content, fileName) {
+export  function parsePOSCAR(content, fileName, options = undefined) {
    console.log(content)
   const structure = readPOSCAR(content, fileName);
-  return initializeWithPOSCAR(structure, fileName);
+  return initializeWithPOSCAR(structure, fileName, options);
 }
 
-export function initializeWithPOSCAR(structure, fileName) {
+export function initializeWithPOSCAR(structure, fileName, options = undefined) {
   const container = new StructureContainer({
     fileName: fileName,
     structures: [structure],
   });
 
-  return initializeUIOnLoad(container);
+  return initializeUIOnLoad(container, options);
 }
 
 
@@ -50,12 +58,6 @@ export function initializeWithPOSCAR(structure, fileName) {
 //   return result;
 // }
 //
-
-
-
-
-// Direct fetch of optimade fails due to cors. Not sure what or why.
-
 
 
 
@@ -79,7 +81,19 @@ export function isLikelyOUTCARContent(content) {
   return false;
 }
 
-export function initializeUIOnLoad(structureContainer) {
+/**
+ * Register a loaded container with the file browser and select it — every
+ * load path funnels through here.
+ * @param {any} structureContainer
+ * @param {{ restoreStoredPrefs?: boolean }} [options] restoreStoredPrefs
+ *   (default true) re-applies the per-structure preferences saved for this
+ *   same file in an earlier session — per-atom user colours
+ *   (utils/ColorModule.js) and focus regions (render/FocusRegionModule.js),
+ *   both stored by structure content in state/structurePrefs.js. A share-URL
+ *   / .crysviz load passes false: that state is a complete snapshot and must
+ *   not have stored preferences mixed in underneath it.
+ */
+export function initializeUIOnLoad(structureContainer, { restoreStoredPrefs = true } = {}) {
   console.log(structureContainer);
   const fileName = structureContainer.fileName;
   const structures = structureContainer.structures;
@@ -90,8 +104,16 @@ export function initializeUIOnLoad(structureContainer) {
   tableBody.appendChild(row);
   fileBrowser.fileData.push({ idx: -1, name: fileName, traj, step });
 
+  // Colours go on BEFORE the row is selected (and rendered) below, so the
+  // first rebuild already paints them.
+  if (restoreStoredPrefs) restoreAtomColors(structureContainer);
+
   structureShip.container.push(structureContainer);
   selectLastAddedRow();
+
+  // Focus regions live on the displayed frame, so they go on once it exists;
+  // restoreFocusRegions repaints the per-instance opacity itself (cheap).
+  if (restoreStoredPrefs) restoreFocusRegions(structureContainer, fileBrowser.selectedStructure);
   return structureContainer;
 }
 
@@ -164,7 +186,7 @@ export function setupStructureInput({ onLoadStructure, setStatus }) {
   pasteModal.hidden = true;
   pasteModal.innerHTML = `
     <div class="paste-modal" role="dialog" aria-modal="true" aria-label="Paste structure text">
-      <textarea id="structureText" placeholder="Paste POSCAR/CIF content, OPTIMADE URL, Materials Project mp-id, or Alexandria agm-id"></textarea>
+      <textarea id="structureText" placeholder="Paste POSCAR/CIF content, an OPTIMADE structure URL, or an Alexandria agm-id"></textarea>
       <div class="paste-modal-actions">
         <button type="button" id="loadTextButton">Load Structure</button>
         <button type="button" id="cancelTextButton">Cancel</button>
@@ -175,6 +197,32 @@ export function setupStructureInput({ onLoadStructure, setStatus }) {
   const structureText = /** @type {HTMLTextAreaElement} */ (pasteModal.querySelector('#structureText'));
   const loadTextButton = pasteModal.querySelector('#loadTextButton');
   const cancelTextButton = pasteModal.querySelector('#cancelTextButton');
+
+  const optimadeWarningDialog = document.createElement('dialog');
+  optimadeWarningDialog.id = 'optimadeWarningDialog';
+  optimadeWarningDialog.setAttribute('aria-labelledby', 'optimadeWarningTitle');
+  optimadeWarningDialog.innerHTML = `
+    <h2 id="optimadeWarningTitle">Structure could not be loaded</h2>
+    <p>The provider's CORS policy blocks browser access. Download the structure and use Upload instead.</p>
+    <button type="button" id="optimadeWarningClose">OK</button>
+  `;
+  document.body.appendChild(optimadeWarningDialog);
+  const optimadeWarningClose = optimadeWarningDialog.querySelector('#optimadeWarningClose');
+  let optimadeWarningTimer = null;
+
+  function closeOptimadeWarning() {
+    if (optimadeWarningTimer !== null) clearTimeout(optimadeWarningTimer);
+    optimadeWarningTimer = null;
+    if (optimadeWarningDialog.open) optimadeWarningDialog.close();
+  }
+
+  function showOptimadeWarning() {
+    closeOptimadeWarning();
+    optimadeWarningDialog.showModal();
+    optimadeWarningTimer = setTimeout(closeOptimadeWarning, 5000);
+  }
+
+  optimadeWarningClose?.addEventListener('click', closeOptimadeWarning);
 
   function openPasteModal() {
     pasteModal.hidden = false;
@@ -188,13 +236,32 @@ export function setupStructureInput({ onLoadStructure, setStatus }) {
   async function loadStructureFromText() {
     const raw = structureText.value.trim();
     if (!raw) {
-      setStatus('Paste POSCAR, CIF, OPTIMADE URL, Materials Project mp-id, or Alexandria agm-id before loading.');
+      setStatus('Paste POSCAR, CIF, an OPTIMADE structure URL, or an Alexandria agm-id before loading.');
       structureText.focus({ preventScroll: true });
       return;
     }
     closePasteModal();
-    await onLoadStructure(raw, 'pasted');
-    structureText.value = '';
+    try {
+      if (isOptimadeStructureUrl(raw)) {
+        setStatus('Fetching structure from OPTIMADE...');
+        const result = await fetchOptimadeStructure(raw);
+        await onLoadStructure(result.content, result.fileName);
+      } else if (normalizeAlexandriaId(raw)) {
+        setStatus('Fetching structure from Alexandria...');
+        const result = await fetchAlexandriaStructure(raw);
+        await onLoadStructure(result.content, result.fileName);
+      } else {
+        await onLoadStructure(raw, 'pasted');
+      }
+      structureText.value = '';
+    } catch (error) {
+      console.warn('Could not load pasted structure:', error);
+      if (error?.code === 'OPTIMADE_CORS_OR_NETWORK') {
+        showOptimadeWarning();
+      } else {
+        setStatus(`Error: ${error.message}`);
+      }
+    }
   }
 
   if (pasteTextButton) pasteTextButton.addEventListener('click', openPasteModal);
@@ -224,16 +291,33 @@ export function setupStructureInput({ onLoadStructure, setStatus }) {
   //      by ui/SavePanel.js) ----
 
   if (downloadButton && downloadMenu) {
+    // Portal the menu to <body> and pin it under the button (position:fixed).
+    // Left in the Files dock panel it can't escape that panel's stacking
+    // context, so sibling dock panels painted over its lower entries.
+    const openDownloadMenu = () => {
+      if (downloadMenu.parentElement !== document.body) document.body.appendChild(downloadMenu);
+      const r = downloadButton.getBoundingClientRect();
+      downloadMenu.style.position = 'fixed';
+      downloadMenu.style.top = `${Math.round(r.bottom + 4)}px`;
+      downloadMenu.style.left = 'auto';
+      downloadMenu.style.right = `${Math.round(window.innerWidth - r.right)}px`;
+      downloadMenu.hidden = false;
+    };
+    const closeDownloadMenu = () => { downloadMenu.hidden = true; };
+
     downloadButton.addEventListener('click', (e) => {
       e.stopPropagation();
-      downloadMenu.hidden = !downloadMenu.hidden;
+      if (downloadMenu.hidden) openDownloadMenu(); else closeDownloadMenu();
     });
-    downloadMenu.addEventListener('click', () => { downloadMenu.hidden = true; });
+    downloadMenu.addEventListener('click', closeDownloadMenu);
     document.addEventListener('click', (e) => {
-      if (!downloadMenu.hidden && !downloadButton.contains(/** @type {Node} */ (e.target))) {
-        downloadMenu.hidden = true;
+      const target = /** @type {Node} */ (e.target);
+      if (!downloadMenu.hidden && !downloadButton.contains(target) && !downloadMenu.contains(target)) {
+        closeDownloadMenu();
       }
     });
+    // A fixed-position menu can't track the button — close it if the layout moves.
+    window.addEventListener('resize', closeDownloadMenu);
   }
 
   // ---- Drag & drop: the Files window and the 3D view are drop targets ----

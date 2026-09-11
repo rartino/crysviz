@@ -11,6 +11,7 @@ import {defaultPOSCAR4} from '../defaults/structure_defaults.js'
 
 // import from the old file structure that need to be combined and ported to the new structure
 import { setupStructureInput } from '../ui/StructureInputModule.js';
+import { showLoadErrorModal, showLoadWarningModal } from '../ui/LoadErrorModal.js';
 // Side-effect import: AboutPanel wires the "about" trigger at module load.
 // (Its named exports are unused, so keep it as a bare import.)
 import '../ui/AboutPanel.js';
@@ -53,6 +54,7 @@ import {initKeyboardShortcuts} from '../ui/KeyboardShortcuts.js'
 
 import { updateField, parseCHGCARFile, parseCubeFile, parseWavecarFile, clearField, revealFieldPanelForCurrentStructure } from '../render/index.js';
 import { updateGroundPlane } from '../render/index.js';
+import { applyFieldPeriodicBounds, updateForces, updateSpins } from '../render/index.js';
 
 // .........................................................................................................
 // Import Panels
@@ -84,7 +86,7 @@ import {initRaytraceWarningModal} from '../ui/RaytraceWarningModal.js'
 
 // New imports (which go here, because they need initializations that happen above until things are refactored)
 import { parse_any } from '../io/index.js';
-import { FileSource, detectFormat, materialize } from '../io/index.js';
+import { FileSource, detectFormat, materialize, HEAD_BYTES } from '../io/index.js';
 import { initializeUIOnLoad } from '../ui/StructureInputModule.js';
 import { fieldBrowser } from '../ui/FieldPanel.js';
 import { resetMathBackend } from '../math/index.js';
@@ -158,6 +160,16 @@ export function updateVisualization(options = {}) {
     // and rely on polyhedra refreshing.
     reRenderPolyhedra = true,
 
+    // The periodic IMAGE SET itself changed — "Show Periodic Images", the
+    // Cell & Supercell panel's display boundary (general.periodicBounds), PBC
+    // bonds. Atoms and bonds are rebuilt from it by the flags above; the other
+    // things drawn per image (force/spin arrows, the volumetric field) are
+    // refreshed by this one, since nothing else in the app watches the
+    // boundary. Off by default: the hot paths (MD/relax frames, trajectory
+    // playback) move atoms within a FIXED image set and refresh their own
+    // arrows.
+    reRenderPeriodic = false,
+
     mOpacity = general.mainOpacity,
     reRenderField = false
   } = options;
@@ -199,6 +211,21 @@ export function updateVisualization(options = {}) {
     updateBonds(mOpacity)
   }
 
+  // Everything else that is drawn once per periodic image: one arrow per drawn
+  // atom (render/SpinModule.js, render/ForceModule.js) and the volumetric
+  // field repeated into the cells the boundary reaches (render/
+  // Render3DFieldModule.js). Rebuilt, not moved — the image COUNT changed.
+  // (Like ShareModule.js and SelectAndHighlightModule.js, this refresh always
+  // draws the structure's own spins: SpinPanel.js's separate "manual spins"
+  // textarea mode lives in that panel's DOM, so a boundary edit made while
+  // manual spins are showing reverts to the structure's until the next manual
+  // redraw.)
+  if (reRenderPeriodic) {
+    if (general.forcesActive) updateForces(general.forceScale ?? 1.0, general.forceColorMap ?? 'heatmap');
+    if (general.spinsActive) updateSpins(general.spinScale ?? 1.0, false, [], general.spinColorMap ?? 'none');
+    applyFieldPeriodicBounds();
+  }
+
   // Overlay structures — one rebuild/update pass per fileBrowser.overlayEntries
   // entry, each keeping its own opacity and bonds visibility.
   if (SecondReRenderAtoms || SecondAtomsUpdate || SecondReRenderBonds || SecondBondsUpdate) {
@@ -235,7 +262,13 @@ export function updateVisualization(options = {}) {
     initModifyStructureButton();
   }
   console.time("uv:updateLattice");
-  if (reRenderLattice) updateLattice(general.currentLatticeColor);
+  if (reRenderLattice) {
+    updateLattice(general.currentLatticeColor);
+    // The field copies are translated by the structure lattice (a supercell
+    // repeats the field's original sub-cell, gaps included), so re-seat them
+    // whenever the lattice is rebuilt. Idempotent and cheap when unchanged.
+    if (!reRenderPeriodic) applyFieldPeriodicBounds();
+  }
   console.timeEnd("uv:updateLattice");
   console.time("uv:updateOther");
   if (reRenderOther) updateOther();
@@ -337,11 +370,10 @@ export async function loadStructure(content, fileName = '', isDefault = false, f
     // WAVECAR can be opened at all.
     const source = FileSource.from(content);
 
-    // Format detection lives in io/formats.js, which is also where the
-    // (currently unused) content-sniffing hooks are declared. `head` is read for
-    // every file so that switching detection over to inspecting contents needs
-    // no change here.
-    const head = await source.readHead();
+    // Format detection lives in io/formats.js and goes by the file's contents
+    // first: the first HEAD_BYTES are read for every file (one cheap slice,
+    // even for a multi-GB WAVECAR) and the name is only the tiebreak/fallback.
+    const head = await source.readHead(HEAD_BYTES);
     const descriptor = detectFormat({ fileName: parserFileName, head });
 
     // Text formats get the whole file as a string exactly as before; .traj gets
@@ -384,7 +416,18 @@ export async function loadStructure(content, fileName = '', isDefault = false, f
         // The parser filename may carry a format suffix, but the browser must
         // display the manifest/addon supplied name verbatim.
         if (structureContainer) structureContainer.fileName = fileName;
-        if (structureContainer && structureContainer.structures) initializeUIOnLoad(structureContainer);
+        // A parser that returns an empty container (no structures, or a
+        // structure with no atoms) "loaded" nothing — treat it as a failure so
+        // it reaches the warning modal instead of silently doing nothing.
+        // Through the frame seam, not `structures` directly: a multi-frame
+        // file comes back as a TrajectoryContainer whose `structures` is a
+        // sparse array with no slot occupied until a frame is shown, and
+        // `.some()` skips holes — indexing it here rejected every good
+        // multi-step OUTCAR/XYZ/pw.x trajectory as "no atoms found".
+        if (!structureContainer?.frameCount || !structureContainer.hasAtoms()) {
+          throw new Error('No atoms or structures were found in this file.');
+        }
+        initializeUIOnLoad(structureContainer);
         break;
     }
 
@@ -431,10 +474,22 @@ export async function loadStructure(content, fileName = '', isDefault = false, f
     }
     resizeRenderer(app.orthographicFrustumSize);
 
+    // Soft warnings a parser attached for data it loaded WITHOUT (e.g. an
+    // aims.out that is spin-polarised but whose per-atom moments we couldn't
+    // read). The structure loaded fine; this just tells the user what dropped.
+    const warnings = structureContainer.loadWarnings;
+    if (Array.isArray(warnings) && warnings.length) {
+      showLoadWarningModal({ fileName, message: warnings[0] });
+    }
+
     return { ok: true, container: structureContainer, name: fileName, format: format || undefined };
   } catch (error) {
+    // Single choke point for every load path and every format: surface a
+    // visible warning instead of failing silently. The status line is kept as
+    // a secondary, non-blocking trace.
     setStatus(`Error: ${error.message}`);
     console.error(error);
+    showLoadErrorModal({ fileName, message: error?.message });
     throw error;
   }
 }

@@ -417,7 +417,7 @@ export function buildSymmetrisedContainer(fileName, positions, lattice, elements
     atoms: atoms,
     periodic: periodic,
   });
-  container.structures.push(structure);
+  container.appendFrame(structure);
   return container;
 }
 

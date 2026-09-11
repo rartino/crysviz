@@ -3,6 +3,7 @@ import { app, fileBrowser, groups, general } from '../state/store.js';
 import { getColorFromMap, getElementDefaultColor } from '../defaults/color_texture_defaults.js';
 import { createArrowMaterial, addArrowEmissiveAttributes } from './ArrowMaterial.js';
 import { requestRender } from './AnimateModule.js';
+import { applyFocusToArrows } from './FocusRegionModule.js';
 
 
 
@@ -36,7 +37,7 @@ function disposeSpinMeshes() {
       groups[key] = null;
     }
   }
-  groups.spinsInstanceBySrcIndex = null;
+  groups.spinsInstancesBySrcIndex = null;
   groups.spinsArrowByInstance = null;
 }
 
@@ -218,6 +219,21 @@ export function updateSpins(spinFactor = 1.0, useManualSpins = false, manualSpin
 
   // --- Prepare arrows for rendering ---
   const arrows = [];
+  // ONE ARROW PER DRAWN ATOM IMAGE, not per source atom. The wrapped set is
+  // the atom images actually on screen — periodic face mirrors, the display
+  // boundary's extra cells (general.periodicBounds), PBC-bond ghosts,
+  // polyhedra-completing atoms — and every one of them is the same atom, so
+  // every one carries the same spin vector. Keeping only the first left every
+  // other copy of an atom bare next to its drawn sphere, and the arrows stopped
+  // following the boundary entirely once it widened past the unit cell.
+  //
+  // Dedupe by (source atom, rounded position) like render/ChargeBadgeModule.js
+  // does for its badges: near-coincident mirror copies of the same atom (a
+  // corner atom can mirror onto positions a fraction of an Angstrom apart)
+  // would otherwise stack two arrows in the same place, which reads as one
+  // arrow drawn too thick.
+  const seenAt = new Set();
+  // Primary-only mode (general.showSpinsOnCopies off): one arrow per source atom.
   const seen = new Set();
 
   // Get species visibility
@@ -238,6 +254,10 @@ export function updateSpins(spinFactor = 1.0, useManualSpins = false, manualSpin
       if (seen.has(srcIdx)) continue;
       seen.add(srcIdx);
     }
+    const c = wrapped.cart[i];
+    const posKey = `${srcIdx}:${c[0].toFixed(2)},${c[1].toFixed(2)},${c[2].toFixed(2)}`;
+    if (seenAt.has(posKey)) continue;
+    seenAt.add(posKey);
 
     const spin = useManualSpins ? spins.find(s => s.atomIndex === srcIdx) : spins[srcIdx];
     if (!spin?.vector) continue;
@@ -309,19 +329,23 @@ export function updateSpins(spinFactor = 1.0, useManualSpins = false, manualSpin
     app.scene.add(groups.spinTipMesh);
   }
 
-  // Which arrow-instance index (shaft i*2/i*2+1, tip i) belongs to which
+  // Which arrow-instance indices (shaft i*2/i*2+1, tip i) belong to which
   // atom (structure.atoms order) — SelectAndHighlightModule.js uses this to
-  // highlight a selected atom's own spin arrow along with the atom itself.
+  // highlight a selected atom's own spin arrows along with the atom itself.
+  // A LIST per atom, not a single index: one atom is drawn once per periodic
+  // image inside the display boundary and each image carries its own arrow, so
+  // selecting the atom has to light all of them.
   // AFTER the mesh-rebuild block above, not before: disposeSpinMeshes()
   // (called from inside it, on a rebuild) unconditionally nulls this out —
   // setting it earlier would just have it wiped again immediately.
-  const instanceBySrcIndex = new Map();
+  const instancesBySrcIndex = new Map();
   const arrowByInstance = new Map();
   arrows.forEach(({ srcIdx }, i) => {
-    instanceBySrcIndex.set(srcIdx, i);
+    const list = instancesBySrcIndex.get(srcIdx);
+    if (list) list.push(i); else instancesBySrcIndex.set(srcIdx, [i]);
     arrowByInstance.set(i, useManualSpins ? structure.spins[srcIdx] : spins[srcIdx]);
   });
-  groups.spinsInstanceBySrcIndex = instanceBySrcIndex;
+  groups.spinsInstancesBySrcIndex = instancesBySrcIndex;
   groups.spinsArrowByInstance = arrowByInstance;
   groups.spinShaftMesh.userData.arrowStylesByInstance = arrowByInstance;
 
@@ -389,6 +413,28 @@ export function updateSpins(spinFactor = 1.0, useManualSpins = false, manualSpin
   groups.spinTipMesh.instanceColor.needsUpdate = true;
   groups.spinTipMesh.geometry.attributes.instanceEmissive.needsUpdate = true;
   groups.spinTipMesh.geometry.attributes.instanceEmissiveIntensity.needsUpdate = true;
+
+  // An InstancedMesh caches the bounding sphere the renderer's frustum test
+  // computes on its FIRST cull check, and three.js never invalidates it when
+  // setMatrixAt() moves instances (see Frustum.intersectsObject: it computes
+  // only while `boundingSphere === null`). The meshes above are only recreated
+  // when the arrow COUNT changes, so any redraw that keeps the count but moves
+  // the arrows — a trajectory frame, a display-boundary edit that shifts which
+  // periodic image an atom is drawn at, a manual spin re-emitted elsewhere —
+  // would otherwise keep culling against where the arrows USED to be. With a
+  // small arrow set (one manual spin) that stale sphere is small and far away,
+  // and the whole mesh vanishes as soon as the camera stops overlapping it:
+  // zooming in tightens the frustum and every arrow disappears at once.
+  // Nulling both defers the recompute to the next cull test, which is where
+  // three.js wants it.
+  groups.spinShaftMesh.boundingSphere = null;
+  groups.spinShaftMesh.boundingBox = null;
+  groups.spinTipMesh.boundingSphere = null;
+  groups.spinTipMesh.boundingBox = null;
+
+  // Fresh arrows: re-derive their focus-region opacity (the instanceOpacity
+  // attribute is reset to 1 on every mesh rebuild).
+  applyFocusToArrows(structure, 'spins');
 
   requestRender(); // on-demand rendering (AnimateModule.js) needs a nudge to repaint
 }

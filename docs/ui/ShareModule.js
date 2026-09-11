@@ -97,7 +97,7 @@ import * as THREE from '../external/three/three.module.js';
 import { parsePOSCAR, initializeUIOnLoad } from './StructureInputModule.js';
 import { readPOSCAR } from '../io/ReadPOSCARModule.js';
 import {
-  StructureContainer, Field, FieldContainer, Force, Spin,
+  StructureContainer, TrajectoryContainer, Field, FieldContainer, Force, Spin,
   getIsosurfaceMaterialSettings, setIsosurfaceMaterialSettings,
   applyMaterialSettingsToStoredIsosurfaces,
 } from '../model/index.js';
@@ -197,15 +197,30 @@ export function captureState({ includeFrames = false, includeFields = false } = 
   let selectedFrameIndex;
   if (includeFrames) {
     const activeContainer = structureShip.container?.[fileBrowser.selectedRowIndex];
-    const structures = activeContainer?.structures ?? [structure];
-    frames = structures.map(frame => ({
-      elements: [...frame.elements],
-      lattice: frame.lattice.map(r => [...r]),
-      positions: frame.atoms.map(a => [...a.position]),
+    // Through the container seam: a store-backed trajectory serves frame
+    // physics from its typed arrays without materialising Structures. The
+    // entries carry Spin/Force objects or plain {vector, scaling} records —
+    // serializeArrows reads the same fields off both. (A container whose
+    // frames live on disk returns a Promise here; the .crysviz save is not
+    // wired for that yet and such containers are not constructed today.)
+    const physicsList = activeContainer ? activeContainer.framePhysicsList() : null;
+    const entries = Array.isArray(physicsList) && physicsList.length
+      ? physicsList
+      : [{
+        elements: [...structure.elements],
+        lattice: structure.lattice.map(r => [...r]),
+        positions: structure.atoms.map(a => [...a.position]),
+        forces: structure.forces?.length ? structure.forces : null,
+        spins: structure.spins?.length ? structure.spins : null,
+      }];
+    frames = entries.map(frame => ({
+      elements: frame.elements,
+      lattice: frame.lattice,
+      positions: frame.positions,
       ...(frame.forces?.length ? { forces: serializeArrows(frame.forces) } : {}),
       ...(frame.spins?.length ? { spins: serializeArrows(frame.spins, true) } : {}),
     }));
-    selectedFrameIndex = Math.max(0, structures.indexOf(structure));
+    selectedFrameIndex = Math.max(0, activeContainer ? activeContainer.frameIndexOf(structure) : 0);
   }
 
   return {
@@ -264,6 +279,7 @@ export function captureState({ includeFrames = false, includeFields = false } = 
       bondLengths: { ...general.bondLengths },
       bondVisibility: { ...general.bondVisibility },
       atomVisibility: { ...general.atomVisibility },
+      focusRegions: nonEmptyDeepCopy(structure.focusRegions),
       bondCutImmunity: { ...general.bondCutImmunity },
       // Force / spin arrow display (issue #53). Only the values ForceModule/
       // SpinModule read to draw the arrows are persisted — not panel widget
@@ -1241,7 +1257,11 @@ export function applySharedState(state, fileName = 'shared.vasp') {
         applyArrows(f, s);
         return s;
       });
-      trajectoryContainer = new StructureContainer({ fileName, structures });
+      // Multi-frame sessions restore as store-backed trajectories, same as a
+      // fresh load; per-frame arrow styling survives via the sparse records.
+      trajectoryContainer = structures.length > 1
+        ? TrajectoryContainer.fromStructures(fileName, structures)
+        : new StructureContainer({ fileName, structures });
       // Optional per-frame cell-kind labels (altermagnets DB precomputes
       // loaded/conventional/primitive as frames). Order-aligned with `frames`;
       // stashed for widget mode to read. Ignored everywhere else. Validate
@@ -1251,13 +1271,13 @@ export function applySharedState(state, fileName = 'shared.vasp') {
         && state.frameKinds.every((k) => typeof k === 'string')) {
         trajectoryContainer.frameKinds = state.frameKinds.slice();
       }
-      initializeUIOnLoad(trajectoryContainer);
+      initializeUIOnLoad(trajectoryContainer, { restoreStoredPrefs: false });
       // Land on the frame the user was viewing before colors/fields are applied,
       // so `structure` below is that frame (also draws its arrows via the gated
       // updateForces/updateSpins in updateStructureFromFrame).
       showTrajectoryFrame(selectedFrameIndex, trajectoryContainer);
     } else {
-      parsePOSCAR(buildPOSCAR({ structure: viewed }), fileName);
+      parsePOSCAR(buildPOSCAR({ structure: viewed }), fileName, { restoreStoredPrefs: false });
     }
   } catch (e) {
     console.error('Failed to load structure from state:', e);
@@ -1266,6 +1286,10 @@ export function applySharedState(state, fileName = 'shared.vasp') {
 
   const structure = fileBrowser.selectedStructure;
   if (!structure) return false;
+
+  if (Array.isArray(state.display?.focusRegions)) {
+    structure.focusRegions = JSON.parse(JSON.stringify(state.display.focusRegions));
+  }
 
   // Single-frame: buildPOSCAR() groups atoms by element, so restore the saved
   // atom ordering before applying any per-atom state that relies on stable

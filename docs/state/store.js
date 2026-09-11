@@ -128,7 +128,7 @@ export const RENDERING_DEFAULTS = {
   renderStyle: 'metallic', // 'metallic' | 'matte' | 'cel' — atom/bond material style
   renderPipeline: 'depthpeel', // active rendering pipeline id; depthpeel self-optimizes to a plain forward pass when the scene has no transparency (DepthPeelPass fast path)
   showAllRenderPipelines: false, // HIDDEN (config-only, no GUI): list superseded/debug pipelines in the rendering dropdown
-  depthPeelLayers: 5, // peel passes for the 'depthpeel' pipeline (1-10; more = deeper transparency, slower)
+  depthPeelLayers: 10, // peel passes for the 'depthpeel' pipeline (1-50; more = deeper transparency, slower)
   rtResolutionScale: 0.95, // raytrace/pathtrace pipelines: internal resolution as a fraction of the canvas
   rtTiledRender: true, // raytrace/pathtrace: render each sample in scissored tiles (one/frame) to keep the shared GPU responsive; untiled half-res while the camera moves
   rtReflectivity: 0.15, // raytrace/pathtrace pipelines: extra mirror reflectivity on opaque surfaces (0-1)
@@ -169,6 +169,10 @@ export const RENDERING_DEFAULTS = {
 export const general = {
   ...RENDERING_DEFAULTS,
   polyEdgeWidth: 1, // polyhedra edge line thickness in pixels (fat lines; 1 = classic hairline)
+  // Multiplier on mouse/touch rotate + pan sensitivity (Visual ▸ Camera slider).
+  // 1 = the tuned default; <1 slower, >1 faster. Persisted via the panelPref of
+  // the same name; applied to controls.rotateSpeed and the GestureArbiter pan.
+  cameraSpeedFactor: 1,
   ForceMin:1e-4,
   ForceMax:2.5,
   BondMin:1.1,
@@ -425,6 +429,11 @@ export const general = {
   // (corner/edge/face atoms duplicated onto all their images); widening e.g.
   // xmax to 1.2 reveals atoms up to 0.2 of a cell past the boundary. Applied
   // in render/LatticeModule.js periodicWrapped (JS + WASM parity).
+  // Everything else drawn per image follows the same region: one force/spin
+  // arrow per drawn atom (render/ForceModule.js, render/SpinModule.js) and the
+  // volumetric field, which is repeated into every cell the region reaches and
+  // clipped to it (model/Isosurface.js setPeriodicBounds; the tracers march the
+  // same box, render/pipeline/raytrace/fieldChunk.js).
   periodicBounds:{ xmin:0, xmax:1, ymin:0, ymax:1, zmin:0, zmax:1 },
   showPBCBonds:false, // Periodic image atoms + bonds across cell (off by default)
   completePolyhedra:false, // Show the out-of-cell atoms needed to complete the polyhedra
