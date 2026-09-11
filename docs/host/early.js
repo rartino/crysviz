@@ -17,13 +17,21 @@ const launch = (() => {
 // chrome up front so it never flashes before WidgetMode.js takes over. The
 // href is captured here, before FileURLLoader strips the #load-file hash, so
 // the widget's logo can link back to the same structure in the full UI.
+//
+// `restorePrefs`: whether the embed re-applies the per-structure preferences
+// (per-atom colours, focus regions — state/structurePrefs.js) this browser
+// saved for the same structure in an earlier full-app session. Off by
+// default: the embed has no UI to see, change or reset them, so a viewer
+// would be stuck with someone's old customisation and no way out. `prefs=1`
+// opts in (an embedder that wants the viewer's own tweaks to carry over).
 const widget = (() => {
   const params = new URLSearchParams(window.location.search);
-  if (!params.has('widget')) return { present: false, href: '' };
+  if (!params.has('widget')) return { present: false, href: '', restorePrefs: true };
   const href = window.location.href;
+  const restorePrefs = params.get('prefs') === '1';
   document.body.classList.add('widget-mode', 'panel-hidden');
   document.getElementById('ui')?.classList.add('panel-hidden');
-  return { present: true, href };
+  return { present: true, href, restorePrefs };
 })();
 
 // Install the public object while the core module graph is still evaluating.
@@ -38,6 +46,12 @@ async function start() {
       host: hostController,
       launch,
       initialize: async () => {
+        if (widget.present) {
+          // Before initializeCore: the default / #load-file structure is
+          // loaded inside it, and initializeUIOnLoad reads this flag then.
+          const { general } = await import('../state/store.js');
+          general.restoreStoredPrefs = widget.restorePrefs;
+        }
         const core = await import('../core/crystal-viewer.js');
         return core.initializeCore(hostController);
       },

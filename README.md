@@ -195,6 +195,15 @@ result shows no group. Widget-only — the full app ignores it.
 
 **Theme** — append `&theme=dark` or `&theme=light` to the URL (`?widget=1&theme=dark#load-file=…`) to force the embed's UI theme at boot; any other/absent value keeps the default (follow the OS). The choice is applied through the theme manager and is not persisted.
 
+**Saved preferences** — the full app remembers per-structure customisations
+(per-atom colours, focus regions) in the browser's storage and re-applies them
+when the same structure is loaded again. Widget mode does **not** do this by
+default: the embed has no UI to inspect, change or reset those preferences, so
+a structure always opens with its defaults (or exactly the state a `.crysviz`
+session carries). Append `&prefs=1` (`?widget=1&prefs=1#load-file=…`) to opt
+in and let the viewer's own saved customisations for that structure carry over
+into the embed.
+
 **Sandboxing** — the iframe does **not** need `allow-same-origin`: widget mode
 runs correctly in an opaque origin where browser storage is unavailable
 (theme/font preferences silently fall back to defaults). An opaque-origin embed

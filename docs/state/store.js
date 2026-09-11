@@ -473,6 +473,15 @@ export const general = {
   // just the primary (Spins panel toggle, default off). Only physically
   // meaningful when the cell is a magnetic unit cell — see the panel (i).
   showSpinsOnCopies: false,
+  // Whether a plain structure load re-applies the per-structure preferences
+  // saved for the same file in an earlier session (per-atom colours, focus
+  // regions — state/structurePrefs.js). The full app leaves this on; widget
+  // mode (host/early.js) turns it off at boot unless the embed URL opts in
+  // with `prefs=1`, since the embed has no UI to inspect, change or reset
+  // those preferences. Read as the default of initializeUIOnLoad's
+  // restoreStoredPrefs option (ui/StructureInputModule.js); an explicit
+  // option still wins (share-URL / .crysviz loads always pass false).
+  restoreStoredPrefs: true,
   fieldActive: true, // "Show Volumetric Field" toggle draws the isosurface
   comparisonActive: false, // "Show Lattice Comparison" keeps the lattice popup synced (shared by both panels below)
   // Master "Enable Comparison" toggle (classic Comparison panel, ui/ComparisonPanel.js):
