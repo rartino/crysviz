@@ -75,6 +75,10 @@ export class ForwardPipeline {
         material.transparent = !!spec.needsTransparency;
         material.depthWrite = true;
         break;
+      case 'arrows':
+        material.transparent = !!spec.needsTransparency;
+        material.depthWrite = !spec.needsTransparency;
+        break;
       case 'compAtoms': {
         // Comparison ghost atoms: uniform opacity only.
         const isTransparent = opacity !== 1;
@@ -107,7 +111,9 @@ export class ForwardPipeline {
         material.transparent = true;
         break;
       case 'isosurface':
-        material.transparent = opacity < 1;
+        // needsTransparency: focus regions fade vertices below the uniform
+        // material opacity via a vertex alpha (FocusRegionModule.applyFocusToField).
+        material.transparent = opacity < 1 || !!spec.needsTransparency;
         material.depthWrite = false;
         // Render after opaque structures to reduce blending artifacts.
         if (spec.mesh) spec.mesh.renderOrder = 1;
